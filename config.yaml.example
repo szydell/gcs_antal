@@ -1,0 +1,34 @@
+
+# GCS Antal Configuration
+# NATS GitLab Authentication Service
+
+# Server configuration
+server:
+  # Host to bind to (0.0.0.0 binds to all interfaces)
+  host: "0.0.0.0"
+  # Port to listen on
+  port: 8080
+  # Request timeout in seconds
+  timeout: 10
+
+# GitLab configuration
+gitlab:
+  # GitLab instance URL (no trailing slash)
+  url: "https://git.sgw.equipment"
+  # Timeout for GitLab API requests in seconds
+  timeout: 5
+
+# Logging configuration
+logging:
+  # Log level: debug, info, warn, error
+  level: "info"
+
+# Sentry configuration (optional)
+# Remove this section or set dsn to empty string to disable Sentry
+sentry:
+  # Sentry DSN - leave empty to disable Sentry
+  dsn: ""
+  # Environment name (development, staging, production)
+  environment: "production"
+  # Percentage of transactions to sample for performance monitoring (0.0 to 1.0)
+  traces_sample_rate: 0.1

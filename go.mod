@@ -26,6 +26,7 @@ require (
 require (
 	github.com/spf13/viper v1.20.1
 	github.com/xanzy/go-gitlab v0.115.0
+	gitlab.com/gitlab-org/api/client-go v0.127.0
 	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 )
