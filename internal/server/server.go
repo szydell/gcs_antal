@@ -9,7 +9,7 @@ import (
 
 	"git.sgw.equipment/restricted/gcs_antal/internal/auth"
 	"github.com/getsentry/sentry-go"
-	"github.com/getsentry/sentry-go/http"
+	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/spf13/viper"
 )
 
@@ -19,12 +19,15 @@ type Server struct {
 }
 
 // NewServer creates a new HTTP server with configured routes
-func NewServer() *Server {
+func NewServer() (*Server, error) {
 	// Create router using standard library
 	mux := http.NewServeMux()
 
 	// Create GitLab auth handler
-	authHandler := auth.NewHandler()
+	authHandler, err := auth.NewHandler()
+	if err != nil {
+		return nil, err
+	}
 
 	// Register routes
 	mux.HandleFunc("POST /auth", authHandler.HandleAuth)
@@ -60,7 +63,7 @@ func NewServer() *Server {
 
 	return &Server{
 		server: srv,
-	}
+	}, nil
 }
 
 // Start starts the HTTP server on the specified address

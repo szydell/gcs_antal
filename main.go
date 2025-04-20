@@ -50,7 +50,12 @@ func main() {
 	}
 
 	// Create and start the server
-	srv := server.NewServer()
+	srv, err := server.NewServer()
+	if err != nil {
+		logger.Error("Failed to initialize server", "error", err)
+		sentry.CaptureException(err)
+		os.Exit(1)
+	}
 
 	// Start server in a goroutine
 	go func() {
