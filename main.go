@@ -2,107 +2,132 @@ package main
 
 import (
 	"context"
-	"flag"
-	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"git.sgw.equipment/restricted/gcs_antal/internal/server"
 	"github.com/getsentry/sentry-go"
 	"github.com/spf13/viper"
+
+	"git.sgw.equipment/restricted/gcs_antal/internal/auth"
+	"git.sgw.equipment/restricted/gcs_antal/internal/server"
 )
 
-func main() {
-	// Parse command line flags
-	configPath := flag.String("config", "config.yaml", "path to config file")
-	flag.Parse()
+func init() {
+	// Set up configuration
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath(".")
+	viper.AutomaticEnv()
 
-	// Setup logger
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
-
-	// Load configuration
-	if err := loadConfig(*configPath); err != nil {
-		logger.Error("Failed to load configuration", "error", err)
+	// Read configuration
+	if err := viper.ReadInConfig(); err != nil {
+		slog.Error("Failed to read config file", "error", err)
 		os.Exit(1)
 	}
 
-	// Initialize Sentry if DSN is provided
+	// Configure logging
+	logLevel := slog.LevelInfo
+	if levelStr := viper.GetString("logging.level"); levelStr != "" {
+		switch levelStr {
+		case "debug":
+			logLevel = slog.LevelDebug
+		case "info":
+			logLevel = slog.LevelInfo
+		case "warn":
+			logLevel = slog.LevelWarn
+		case "error":
+			logLevel = slog.LevelError
+		}
+	}
+
+	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: logLevel,
+	})
+	slog.SetDefault(slog.New(handler))
+
+	// Initialize Sentry if configured
 	if dsn := viper.GetString("sentry.dsn"); dsn != "" {
 		err := sentry.Init(sentry.ClientOptions{
 			Dsn:              dsn,
 			Environment:      viper.GetString("sentry.environment"),
-			TracesSampleRate: viper.GetFloat64("sentry.traces_sample_rate"),
+			TracesSampleRate: viper.GetFloat64("sentry.sample_rate"),
 		})
 		if err != nil {
-			logger.Warn("Sentry initialization failed", "error", err)
+			slog.Error("Failed to initialize Sentry", "error", err)
 		} else {
-			logger.Info("Sentry initialized successfully")
-			defer sentry.Flush(2 * time.Second)
+			slog.Info("Sentry initialized successfully")
 		}
-	} else {
-		logger.Info("Sentry DSN not provided, error tracking disabled")
 	}
+}
 
-	// Create and start the server
-	srv, err := server.NewServer()
+func main() {
+	logger := slog.With("component", "main")
+	logger.Info("Starting NATS-GitLab Authentication Service")
+
+	// Create GitLab client
+	gitlabClient := auth.NewGitLabClient()
+
+	// Create NATS client
+	natsClient, err := auth.NewNATSClient(
+		viper.GetString("nats.url"),
+		viper.GetString("nats.user"),
+		viper.GetString("nats.pass"),
+		viper.GetString("auth.issuer_seed"),
+		viper.GetString("auth.xkey_seed"),
+		gitlabClient,
+	)
 	if err != nil {
-		logger.Error("Failed to initialize server", "error", err)
-		sentry.CaptureException(err)
+		logger.Error("Failed to create NATS client", "error", err)
 		os.Exit(1)
 	}
 
-	// Start server in a goroutine
+	// Start NATS client
+	if err := natsClient.Start(); err != nil {
+		logger.Error("Failed to start NATS client", "error", err)
+		os.Exit(1)
+	}
+
+	// Create HTTP server
+	srv := server.NewServer(
+		viper.GetString("server.host"),
+		viper.GetInt("server.port"),
+		time.Duration(viper.GetInt("server.timeout"))*time.Second,
+	)
+
+	// Start HTTP server in a goroutine
 	go func() {
-		addr := fmt.Sprintf("%s:%d", viper.GetString("server.host"), viper.GetInt("server.port"))
-		logger.Info("Starting server", "address", addr)
-		if err := srv.Start(addr); err != nil {
-			logger.Error("Server failed", "error", err)
+		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
+			logger.Error("Failed to start HTTP server", "error", err)
+			os.Exit(1)
 		}
 	}()
 
-	// Wait for interrupt signal to gracefully shutdown the server
+	// Set up signal handling for graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	// Wait for interrupt signal
 	<-quit
 	logger.Info("Shutting down server...")
 
-	// Create a deadline to wait for current operations to complete
+	// Create context with timeout for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		logger.Error("Server forced to shutdown", "error", err)
-		sentry.CaptureException(err)
+
+	// Stop HTTP server
+	if err := srv.Stop(ctx); err != nil {
+		logger.Error("Server shutdown failed", "error", err)
 	}
+
+	// Stop NATS client
+	natsClient.Stop()
+
+	// Flush sentry events
+	sentry.Flush(2 * time.Second)
 
 	logger.Info("Server exited properly")
-}
-
-func loadConfig(configPath string) error {
-	viper.SetConfigFile(configPath)
-	viper.SetConfigType("yaml")
-
-	// Set default values
-	viper.SetDefault("server.host", "0.0.0.0")
-	viper.SetDefault("server.port", 8080)
-	viper.SetDefault("server.timeout", 10) // seconds
-	viper.SetDefault("gitlab.url", "https://git.sgw.equipment")
-	viper.SetDefault("gitlab.timeout", 5) // seconds
-	viper.SetDefault("logging.level", "info")
-
-	// Read environment variables prefixed with GCS_ANTAL_
-	viper.SetEnvPrefix("GCS_ANTAL")
-	viper.AutomaticEnv()
-
-	// Read the configuration file
-	if err := viper.ReadInConfig(); err != nil {
-		return fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	return nil
 }
