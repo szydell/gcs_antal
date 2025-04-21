@@ -1,4 +1,3 @@
-
 # GCS Antal Configuration
 # NATS GitLab Authentication Service
 
@@ -14,9 +13,22 @@ server:
 # GitLab configuration
 gitlab:
   # GitLab instance URL (no trailing slash)
-  url: "https://git.sgw.equipment"
+  url: "https://gitlab.example"
   # Timeout for GitLab API requests in seconds
   timeout: 5
+
+# NATS configuration
+nats:
+  # NATS server URL
+  url: "nats://localhost:4222"
+  # Authentication user for connecting to NATS
+  user: "auth"
+  # Authentication password for connecting to NATS
+  pass: "auth"
+  # Issuer seed for signing responses
+  issuer_seed: ""
+  # XKey seed for encryption (optional, leave empty to disable)
+  xkey_seed: ""
 
 # Logging configuration
 logging:
