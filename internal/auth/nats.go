@@ -1,8 +1,7 @@
 package auth
 
 import (
-	// Import crypto/rand
-
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -31,9 +30,20 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 	// Log connection parameters (without sensitive data)
 	logger.Info("Attempting to connect to NATS", "url", url)
 
+	// Add Sentry breadcrumb for connection attempt
+	sentry.AddBreadcrumb(&sentry.Breadcrumb{
+		Category: "nats",
+		Message:  "Attempting to connect to NATS",
+		Level:    sentry.LevelInfo,
+		Data: map[string]interface{}{
+			"url": url,
+		},
+	})
+
 	// Parse the issuer seed
 	issuerKeyPair, err := nkeys.FromSeed([]byte(issuerSeed))
 	if err != nil {
+		sentry.CaptureException(fmt.Errorf("invalid issuer seed: %w", err))
 		return nil, fmt.Errorf("invalid issuer seed: %w", err)
 	}
 
@@ -42,6 +52,7 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 	if xKeySeed != "" {
 		xKeyPair, err = nkeys.FromSeed([]byte(xKeySeed))
 		if err != nil {
+			sentry.CaptureException(fmt.Errorf("invalid xKey seed: %w", err))
 			return nil, fmt.Errorf("invalid xKey seed: %w", err)
 		}
 	}
@@ -52,12 +63,32 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 		nats.MaxReconnects(-1),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			logger.Warn("Disconnected from NATS", "error", err)
+			sentry.WithScope(func(scope *sentry.Scope) {
+				scope.SetTag("connection_event", "disconnect")
+				scope.SetLevel(sentry.LevelWarning)
+				sentry.CaptureMessage("Disconnected from NATS server")
+			})
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
 			logger.Info("Reconnected to NATS", "server", nc.ConnectedUrl())
+			sentry.AddBreadcrumb(&sentry.Breadcrumb{
+				Category: "nats",
+				Message:  "Reconnected to NATS server",
+				Level:    sentry.LevelInfo,
+				Data: map[string]interface{}{
+					"server": nc.ConnectedUrl(),
+				},
+			})
 		}),
 		nats.ErrorHandler(func(nc *nats.Conn, s *nats.Subscription, err error) {
 			logger.Error("NATS error", "error", err)
+			sentry.WithScope(func(scope *sentry.Scope) {
+				scope.SetTag("error_type", "nats_subscription")
+				if s != nil {
+					scope.SetTag("subject", s.Subject)
+				}
+				sentry.CaptureException(err)
+			})
 		}),
 	}
 
@@ -69,10 +100,19 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 	// Connect to NATS
 	nc, err := nats.Connect(url, opts...)
 	if err != nil {
+		sentry.CaptureException(fmt.Errorf("failed to connect to NATS: %w", err))
 		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
 	}
 
 	logger.Info("Connected to NATS server", "url", nc.ConnectedUrl())
+	sentry.AddBreadcrumb(&sentry.Breadcrumb{
+		Category: "nats",
+		Message:  "Connected to NATS server",
+		Level:    sentry.LevelInfo,
+		Data: map[string]interface{}{
+			"server": nc.ConnectedUrl(),
+		},
+	})
 
 	return &NATSClient{
 		nc:            nc,
@@ -85,20 +125,37 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 
 // Start starts listening for authentication requests
 func (c *NATSClient) Start() error {
+	// Start Sentry transaction for NATS subscription
+	ctx := context.Background()
+	span := sentry.StartTransaction(ctx, "nats.subscribe.$SYS.REQ.USER.AUTH")
+	defer span.Finish()
+
 	// Subscribe to the auth_callout subject
 	_, err := c.nc.Subscribe("$SYS.REQ.USER.AUTH", func(msg *nats.Msg) {
 		c.handleAuthRequest(msg)
 	})
 	if err != nil {
+		sentry.CaptureException(fmt.Errorf("failed to subscribe to auth requests: %w", err))
 		return fmt.Errorf("failed to subscribe to auth requests: %w", err)
 	}
 
 	c.logger.Info("Started listening for authentication requests")
+	sentry.AddBreadcrumb(&sentry.Breadcrumb{
+		Category: "nats",
+		Message:  "Started listening for authentication requests",
+		Level:    sentry.LevelInfo,
+	})
+
 	return nil
 }
 
 // handleAuthRequest processes an authentication request from NATS
 func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
+	// Start Sentry transaction for auth request
+	ctx := context.Background()
+	tx := sentry.StartTransaction(ctx, "auth.request")
+	defer tx.Finish()
+
 	c.logger.Debug("Received auth request", "data_length", len(msg.Data))
 
 	// Decode the authorization request claims
@@ -107,6 +164,12 @@ func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
 		c.logger.Error("Failed to decode auth request", "error", err)
 		// Nie znamy userNkey ani serverId, więc wysyłamy puste
 		c.respondMsg(msg.Reply, "", "", "", "invalid request format")
+
+		sentry.WithScope(func(scope *sentry.Scope) {
+			scope.SetTag("error_type", "decode_auth_request")
+			scope.SetExtra("data_length", len(msg.Data))
+			sentry.CaptureException(err)
+		})
 		return
 	}
 
@@ -116,25 +179,55 @@ func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
 	username := rc.ConnectOptions.Username
 	token := rc.ConnectOptions.Password
 
+	// Add context to Sentry transaction
+	tx.SetTag("username", username)
+	tx.SetTag("server_id", serverId)
+
 	c.logger.Info("Processing auth request", "username", username, "nkey", userNkey)
+
+	// Create child span for GitLab verification
+	gitlabCtx := sentry.SetHubOnContext(ctx, sentry.CurrentHub())
+	span := sentry.StartSpan(gitlabCtx, "gitlab.verify_token")
 
 	// Verify GitLab token
 	authentic, err := c.gitlabClient.VerifyToken(token)
 	if err != nil {
 		c.logger.Error("Error verifying GitLab token", "error", err)
 		c.respondMsg(msg.Reply, userNkey, serverId, "", "authentication error")
-		sentry.CaptureException(err)
+
+		span.Status = sentry.SpanStatusInternalError
+		span.SetData("error", err.Error())
+		span.Finish()
+
+		sentry.WithScope(func(scope *sentry.Scope) {
+			scope.SetUser(sentry.User{Username: username})
+			scope.SetTag("error_type", "gitlab_verification")
+			sentry.CaptureException(err)
+		})
 		return
 	}
+	span.Finish()
 
 	if !authentic {
 		c.logger.Info("Authentication failed", "username", username)
 		c.respondMsg(msg.Reply, userNkey, serverId, "", "invalid credentials")
+
+		sentry.WithScope(func(scope *sentry.Scope) {
+			scope.SetUser(sentry.User{Username: username})
+			scope.SetTag("auth_status", "failed")
+			scope.SetLevel(sentry.LevelWarning)
+			sentry.CaptureMessage("Authentication failed - invalid credentials")
+		})
 		return
 	}
 
 	// Authentication successful
 	c.logger.Info("Authentication successful", "username", username)
+	tx.SetTag("auth_status", "success")
+
+	// Create span for JWT creation
+	jwtCtx := sentry.SetHubOnContext(ctx, sentry.CurrentHub())
+	jwtSpan := sentry.StartSpan(jwtCtx, "jwt.create_user_claims")
 
 	// Create user claims with permissions
 	uc := jwt.NewUserClaims(userNkey)
@@ -169,26 +262,61 @@ func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
 		uc.Permissions.Sub.Deny.Add(subject)
 		c.logger.Debug("Added subscribe deny permission", "subject", subject)
 	}
+	jwtSpan.Finish()
 
 	// Validate the claims
+	valCtx := sentry.SetHubOnContext(ctx, sentry.CurrentHub())
+	validationSpan := sentry.StartSpan(valCtx, "jwt.validate_claims")
 	vr := jwt.CreateValidationResults()
 	uc.Validate(vr)
+	validationSpan.Finish()
+
 	if len(vr.Errors()) > 0 {
 		c.logger.Error("Error validating user claims", "errors", vr.Errors())
 		c.respondMsg(msg.Reply, userNkey, serverId, "", fmt.Sprintf("error validating claims: %s", vr.Errors()))
+
+		sentry.WithScope(func(scope *sentry.Scope) {
+			scope.SetUser(sentry.User{Username: username})
+			scope.SetTag("error_type", "claim_validation")
+			scope.SetExtra("validation_errors", vr.Errors())
+			sentry.CaptureMessage("Error validating user claims")
+		})
 		return
 	}
 
 	// Encode the user claims
+	encodeCtx := sentry.SetHubOnContext(ctx, sentry.CurrentHub())
+	encodeSpan := sentry.StartSpan(encodeCtx, "jwt.encode_claims")
 	userJwt, err := uc.Encode(c.issuerKeyPair)
+	encodeSpan.Finish()
+
 	if err != nil {
 		c.logger.Error("Error encoding user JWT", "error", err)
 		c.respondMsg(msg.Reply, userNkey, serverId, "", "error encoding user JWT")
+
+		sentry.WithScope(func(scope *sentry.Scope) {
+			scope.SetUser(sentry.User{Username: username})
+			scope.SetTag("error_type", "jwt_encoding")
+			sentry.CaptureException(err)
+		})
 		return
 	}
 
 	// Send response with encoded JWT - use userNkey instead of issuerPubKey
+	responseCtx := sentry.SetHubOnContext(ctx, sentry.CurrentHub())
+	responseSpan := sentry.StartSpan(responseCtx, "nats.send_response")
 	c.respondMsg(msg.Reply, userNkey, serverId, userJwt, "")
+	responseSpan.Finish()
+
+	// Add successful authentication metric to Sentry
+	sentry.AddBreadcrumb(&sentry.Breadcrumb{
+		Category: "auth",
+		Message:  "User successfully authenticated",
+		Level:    sentry.LevelInfo,
+		Data: map[string]interface{}{
+			"username": username,
+		},
+	})
 }
 
 // respondMsg sends an authentication response to NATS
@@ -196,15 +324,27 @@ func (c *NATSClient) respondMsg(replySubject, userNkey, serverId, userJwt, errMs
 	// If userNkey is empty or invalid, generate a temporary one
 	if userNkey == "" || !strings.HasPrefix(userNkey, "U") {
 		c.logger.Warn("Invalid userNkey, generating temporary one", "userNkey", userNkey)
+
+		sentry.AddBreadcrumb(&sentry.Breadcrumb{
+			Category: "auth",
+			Message:  "Invalid userNkey, generating temporary one",
+			Level:    sentry.LevelWarning,
+			Data: map[string]interface{}{
+				"userNkey": userNkey,
+			},
+		})
+
 		keypair, err := nkeys.CreateUser()
 		if err != nil {
 			c.logger.Error("Failed to generate temporary NKey", "error", err)
+			sentry.CaptureException(err)
 			return
 		}
 
 		userNkey, err = keypair.PublicKey()
 		if err != nil {
 			c.logger.Error("Failed to get public key from temporary NKey", "error", err)
+			sentry.CaptureException(err)
 			return
 		}
 	}
@@ -221,6 +361,7 @@ func (c *NATSClient) respondMsg(replySubject, userNkey, serverId, userJwt, errMs
 	token, err := rc.Encode(c.issuerKeyPair)
 	if err != nil {
 		c.logger.Error("Failed to encode response JWT", "error", err)
+		sentry.CaptureException(err)
 		return
 	}
 
@@ -229,11 +370,24 @@ func (c *NATSClient) respondMsg(replySubject, userNkey, serverId, userJwt, errMs
 	// Send the response
 	if err := c.nc.Publish(replySubject, data); err != nil {
 		c.logger.Error("Failed to publish response", "error", err)
+		sentry.WithScope(func(scope *sentry.Scope) {
+			scope.SetTag("error_type", "nats_publish")
+			scope.SetTag("reply_subject", replySubject)
+			sentry.CaptureException(err)
+		})
 	} else {
 		if errMsg == "" {
 			c.logger.Debug("Sent successful auth response", "length", len(data))
 		} else {
 			c.logger.Debug("Sent error auth response", "length", len(data), "error", errMsg)
+			sentry.AddBreadcrumb(&sentry.Breadcrumb{
+				Category: "auth",
+				Message:  "Sent error auth response",
+				Level:    sentry.LevelError,
+				Data: map[string]interface{}{
+					"error": errMsg,
+				},
+			})
 		}
 	}
 }
@@ -242,6 +396,11 @@ func (c *NATSClient) respondMsg(replySubject, userNkey, serverId, userJwt, errMs
 func (c *NATSClient) Stop() {
 	if c.nc != nil && !c.nc.IsClosed() {
 		c.logger.Info("Closing NATS connection")
+		sentry.AddBreadcrumb(&sentry.Breadcrumb{
+			Category: "nats",
+			Message:  "Closing NATS connection",
+			Level:    sentry.LevelInfo,
+		})
 		c.nc.Close()
 	}
 }
