@@ -88,9 +88,6 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        
       - name: List artifacts
         run: ls -la */
         
@@ -104,3 +101,45 @@ jobs:
           files: |
             gcs_antal-linux-amd64/gcs_antal-linux-amd64
             gcs_antal-linux-arm64/gcs_antal-linux-arm64
+
+  deploy:
+    name: Deploy to Production Server
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    permissions:
+      contents: read
+    steps:
+      - name: Download amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gcs_antal-linux-amd64
+          path: ./
+          
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.ANTAL_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H n1.gcs.sgw.equipment >> ~/.ssh/known_hosts
+        
+      - name: Deploy binary to server
+        run: |
+          scp gcs_antal-linux-amd64 antal@n1.gcs.sgw.equipment:~/
+          
+      - name: Install and restart service
+        run: |
+          ssh antal@n1.gcs.sgw.equipment '
+            sudo /bin/mv /home/antal/gcs_antal-linux-amd64 /usr/local/bin/gcs_antal-linux-amd64 &&
+            sudo /bin/systemctl restart gcs_antal.service
+          '
+          
+      - name: Verify service is running
+        run: |
+          ssh antal@n1.gcs.sgw.equipment 'systemctl is-active --quiet gcs_antal.service && echo "Service is running successfully"'
+          
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519
