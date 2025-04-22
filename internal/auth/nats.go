@@ -1,16 +1,18 @@
 package auth
 
 import (
-	"crypto/rand" // Import crypto/rand
-	"encoding/base64"
-	"encoding/json"
+	// Import crypto/rand
+
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/nats-io/jwt/v2"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nkeys"
+	"github.com/spf13/viper"
 )
 
 // NATSClient handles NATS authentication requests
@@ -25,6 +27,9 @@ type NATSClient struct {
 // NewNATSClient creates a new NATS client
 func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabClient *GitLabClient) (*NATSClient, error) {
 	logger := slog.With("component", "nats_client")
+
+	// Log connection parameters (without sensitive data)
+	logger.Info("Attempting to connect to NATS", "url", url)
 
 	// Parse the issuer seed
 	issuerKeyPair, err := nkeys.FromSeed([]byte(issuerSeed))
@@ -41,7 +46,7 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 		}
 	}
 
-	// Connect to NATS
+	// Connect to NATS with standard options
 	opts := []nats.Option{
 		nats.ReconnectWait(5 * time.Second),
 		nats.MaxReconnects(-1),
@@ -67,7 +72,7 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
 	}
 
-	logger.Info("Connected to NATS server", "url", url)
+	logger.Info("Connected to NATS server", "url", nc.ConnectedUrl())
 
 	return &NATSClient{
 		nc:            nc,
@@ -94,181 +99,143 @@ func (c *NATSClient) Start() error {
 
 // handleAuthRequest processes an authentication request from NATS
 func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
-	var request NATSRequest
-	if err := json.Unmarshal(msg.Data, &request); err != nil {
-		c.logger.Error("Failed to unmarshal auth request", "error", err)
-		c.sendFailureResponse(msg.Reply)
+	c.logger.Debug("Received auth request", "data_length", len(msg.Data))
+
+	// Decode the authorization request claims
+	rc, err := jwt.DecodeAuthorizationRequestClaims(string(msg.Data))
+	if err != nil {
+		c.logger.Error("Failed to decode auth request", "error", err)
+		// Nie znamy userNkey ani serverId, więc wysyłamy puste
+		c.respondMsg(msg.Reply, "", "", "", "invalid request format")
 		return
 	}
 
-	// Extract credentials from the request
-	username := request.NATS.ConnectOpts.Username
-	token := request.NATS.ConnectOpts.Password
+	// Wyciągnij potrzebne dane z żądania JWT
+	userNkey := rc.UserNkey
+	serverId := rc.Server.ID
+	username := rc.ConnectOptions.Username
+	token := rc.ConnectOptions.Password
 
-	c.logger.Info("Received auth request",
-		"client_id", request.NATS.ClientInfo.ID,
-		"username", username)
+	c.logger.Info("Processing auth request", "username", username, "nkey", userNkey)
 
 	// Verify GitLab token
-	authentic, err := c.gitlabClient.VerifyToken(username, token)
+	authentic, err := c.gitlabClient.VerifyToken(token)
 	if err != nil {
 		c.logger.Error("Error verifying GitLab token", "error", err)
-		c.sendFailureResponse(msg.Reply)
+		c.respondMsg(msg.Reply, userNkey, serverId, "", "authentication error")
 		sentry.CaptureException(err)
 		return
 	}
 
 	if !authentic {
 		c.logger.Info("Authentication failed", "username", username)
-		c.sendFailureResponse(msg.Reply)
+		c.respondMsg(msg.Reply, userNkey, serverId, "", "invalid credentials")
 		return
 	}
 
-	// Authentication successful, provide permissions
+	// Authentication successful
 	c.logger.Info("Authentication successful", "username", username)
 
-	// Prepare response
-	response := NATSResponse{
-		OK: true,
-		Permissions: &Permissions{
-			Publish: &PermissionRules{
-				Allow: []string{"topic.>"},
-				Deny:  []string{"private.>"},
-			},
-			Subscribe: &PermissionRules{
-				Allow: []string{"topic.>"},
-				Deny:  []string{"private.>"},
-			},
-		},
+	// Create user claims with permissions
+	uc := jwt.NewUserClaims(userNkey)
+	uc.Name = username
+
+	// Use Audience from configuration
+	uc.Audience = viper.GetString("nats.audience")
+
+	// Set permissions from configuration
+	// Publish permissions
+	pubAllow := viper.GetStringSlice("nats.permissions.publish.allow")
+	for _, subject := range pubAllow {
+		uc.Permissions.Pub.Allow.Add(subject)
+		c.logger.Debug("Added publish allow permission", "subject", subject)
 	}
 
-	// Send response
-	c.sendSuccessResponse(msg.Reply, response)
+	pubDeny := viper.GetStringSlice("nats.permissions.publish.deny")
+	for _, subject := range pubDeny {
+		uc.Permissions.Pub.Deny.Add(subject)
+		c.logger.Debug("Added publish deny permission", "subject", subject)
+	}
+
+	// Subscribe permissions
+	subAllow := viper.GetStringSlice("nats.permissions.subscribe.allow")
+	for _, subject := range subAllow {
+		uc.Permissions.Sub.Allow.Add(subject)
+		c.logger.Debug("Added subscribe allow permission", "subject", subject)
+	}
+
+	subDeny := viper.GetStringSlice("nats.permissions.subscribe.deny")
+	for _, subject := range subDeny {
+		uc.Permissions.Sub.Deny.Add(subject)
+		c.logger.Debug("Added subscribe deny permission", "subject", subject)
+	}
+
+	// Validate the claims
+	vr := jwt.CreateValidationResults()
+	uc.Validate(vr)
+	if len(vr.Errors()) > 0 {
+		c.logger.Error("Error validating user claims", "errors", vr.Errors())
+		c.respondMsg(msg.Reply, userNkey, serverId, "", fmt.Sprintf("error validating claims: %s", vr.Errors()))
+		return
+	}
+
+	// Encode the user claims
+	userJwt, err := uc.Encode(c.issuerKeyPair)
+	if err != nil {
+		c.logger.Error("Error encoding user JWT", "error", err)
+		c.respondMsg(msg.Reply, userNkey, serverId, "", "error encoding user JWT")
+		return
+	}
+
+	// Send response with encoded JWT - use userNkey instead of issuerPubKey
+	c.respondMsg(msg.Reply, userNkey, serverId, userJwt, "")
 }
 
-// sendSuccessResponse sends a successful authentication response
-func (c *NATSClient) sendSuccessResponse(replySubject string, response NATSResponse) {
-	// Marshal the response to JSON
-	respBytes, err := json.Marshal(response)
-	if err != nil {
-		c.logger.Error("Failed to marshal response", "error", err)
-		c.sendFailureResponse(replySubject)
-		return
-	}
-
-	// Sign the response
-	sig, err := c.issuerKeyPair.Sign(respBytes)
-	if err != nil {
-		c.logger.Error("Failed to sign response", "error", err)
-		c.sendFailureResponse(replySubject)
-		return
-	}
-
-	// Create signed response
-	signedResp := map[string]any{
-		"data": string(respBytes),
-		"sig":  base64.StdEncoding.EncodeToString(sig),
-	}
-
-	finalResp, err := json.Marshal(signedResp)
-	if err != nil {
-		c.logger.Error("Failed to marshal signed response", "error", err)
-		c.sendFailureResponse(replySubject)
-		return
-	}
-
-	// Encrypt if xKey is available
-	if c.xKeyPair != nil {
-		finalResp, err = c.encryptResponse(finalResp)
+// respondMsg sends an authentication response to NATS
+func (c *NATSClient) respondMsg(replySubject, userNkey, serverId, userJwt, errMsg string) {
+	// If userNkey is empty or invalid, generate a temporary one
+	if userNkey == "" || !strings.HasPrefix(userNkey, "U") {
+		c.logger.Warn("Invalid userNkey, generating temporary one", "userNkey", userNkey)
+		keypair, err := nkeys.CreateUser()
 		if err != nil {
-			c.logger.Error("Failed to encrypt response", "error", err)
-			c.sendFailureResponse(replySubject)
+			c.logger.Error("Failed to generate temporary NKey", "error", err)
+			return
+		}
+
+		userNkey, err = keypair.PublicKey()
+		if err != nil {
+			c.logger.Error("Failed to get public key from temporary NKey", "error", err)
 			return
 		}
 	}
 
+	// Create authorization response claims
+	rc := jwt.NewAuthorizationResponseClaims(userNkey)
+	if serverId != "" {
+		rc.Audience = serverId
+	}
+	rc.Error = errMsg
+	rc.Jwt = userJwt
+
+	// Sign with the issuer key
+	token, err := rc.Encode(c.issuerKeyPair)
+	if err != nil {
+		c.logger.Error("Failed to encode response JWT", "error", err)
+		return
+	}
+
+	data := []byte(token)
+
 	// Send the response
-	if err := c.nc.Publish(replySubject, finalResp); err != nil {
+	if err := c.nc.Publish(replySubject, data); err != nil {
 		c.logger.Error("Failed to publish response", "error", err)
-	}
-}
-
-// sendFailureResponse sends a failure response
-func (c *NATSClient) sendFailureResponse(replySubject string) {
-	response := NATSResponse{OK: false}
-
-	respBytes, err := json.Marshal(response)
-	if err != nil {
-		c.logger.Error("Failed to marshal failure response", "error", err)
-		return
-	}
-
-	// Sign the response
-	sig, err := c.issuerKeyPair.Sign(respBytes)
-	if err != nil {
-		c.logger.Error("Failed to sign failure response", "error", err)
-		return
-	}
-
-	// Create signed response
-	signedResp := map[string]any{
-		"data": string(respBytes),
-		"sig":  base64.StdEncoding.EncodeToString(sig),
-	}
-
-	finalResp, err := json.Marshal(signedResp)
-	if err != nil {
-		c.logger.Error("Failed to marshal signed failure response", "error", err)
-		return
-	}
-
-	// Encrypt if xKey is available
-	if c.xKeyPair != nil {
-		finalResp, err = c.encryptResponse(finalResp)
-		if err != nil {
-			c.logger.Error("Failed to encrypt failure response", "error", err)
-			return
+	} else {
+		if errMsg == "" {
+			c.logger.Debug("Sent successful auth response", "length", len(data))
+		} else {
+			c.logger.Debug("Sent error auth response", "length", len(data), "error", errMsg)
 		}
 	}
-
-	// Send the response
-	if err := c.nc.Publish(replySubject, finalResp); err != nil {
-		c.logger.Error("Failed to publish failure response", "error", err)
-	}
-}
-
-// encryptResponse encrypts the response using the xKey
-func (c *NATSClient) encryptResponse(data []byte) ([]byte, error) {
-	// In NATS auth_callout, we use the xKey to encrypt responses
-	// The server already has our public key configured
-
-	// Generate a 24-byte nonce using crypto/rand
-	nonce := make([]byte, 24)
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	// Encrypt the data using our xKey's private key (Seal method)
-	// Convert data to string before passing to Seal
-	cipher, err := c.xKeyPair.Seal(nonce, string(data)) // Convert data to string here
-	if err != nil {
-		return nil, fmt.Errorf("encryption failed using Seal: %w", err)
-	}
-
-	// Format the response according to NATS auth_callout expectations
-	// The server will use our public xKey (which it has) to decrypt this message
-	encResp := map[string]string{
-		"nonce": base64.StdEncoding.EncodeToString(nonce),
-		"data":  base64.StdEncoding.EncodeToString(cipher),
-	}
-
-	// Marshal the encrypted response structure to JSON
-	respBytes, err := json.Marshal(encResp)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal encrypted response: %w", err)
-	}
-
-	return respBytes, nil
 }
 
 // Stop cleanly closes the NATS connection

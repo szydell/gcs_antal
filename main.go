@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
 	"git.sgw.equipment/restricted/gcs_antal/internal/auth"
@@ -17,11 +18,23 @@ import (
 )
 
 func init() {
-	// Set up configuration
+	// Define command line flags
+	pflag.String("config", "", "Path to config file")
+	pflag.Parse()
+
+	// Bind command line flags to viper
+	viper.BindPFlags(pflag.CommandLine)
+
+	// Set up configuration defaults
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(".")
 	viper.AutomaticEnv()
+
+	// Use custom config file if specified
+	if configFile := viper.GetString("config"); configFile != "" {
+		viper.SetConfigFile(configFile)
+	}
 
 	// Read configuration
 	if err := viper.ReadInConfig(); err != nil {
@@ -76,8 +89,8 @@ func main() {
 		viper.GetString("nats.url"),
 		viper.GetString("nats.user"),
 		viper.GetString("nats.pass"),
-		viper.GetString("auth.issuer_seed"),
-		viper.GetString("auth.xkey_seed"),
+		viper.GetString("nats.issuer_seed"),
+		viper.GetString("nats.xkey_seed"),
 		gitlabClient,
 	)
 	if err != nil {

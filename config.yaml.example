@@ -25,10 +25,26 @@ nats:
   user: "auth"
   # Authentication password for connecting to NATS
   pass: "auth"
+  # Default audience for user claims
+  audience: "APP"
   # Issuer seed for signing responses
   issuer_seed: ""
   # XKey seed for encryption (optional, leave empty to disable)
   xkey_seed: ""
+  # User permissions configuration (for every authenticated user)
+  permissions:
+    publish:
+      allow:
+        - "topic.>"
+        - "_INBOX.>"
+      deny:
+        - "private.>"
+    subscribe:
+      allow:
+        - "topic.>"
+        - "_INBOX.>"
+      deny:
+        - "private.>"
 
 # Logging configuration
 logging:

@@ -26,9 +26,9 @@ func NewGitLabClient() *GitLabClient {
 	}
 }
 
-// VerifyToken checks if the provided token is valid for the given username
-func (c *GitLabClient) VerifyToken(username, token string) (bool, error) {
-	logger := slog.With("service", "gitlab", "username", username)
+// VerifyToken checks if the provided token is valid
+func (c *GitLabClient) VerifyToken(token string) (bool, error) {
+	logger := slog.With("service", "gitlab")
 	logger.Debug("Verifying GitLab token")
 
 	// Create context with timeout
@@ -64,15 +64,8 @@ func (c *GitLabClient) VerifyToken(username, token string) (bool, error) {
 		return false, nil
 	}
 
-	// Check if username matches
-	if user.Username != username {
-		logger.Info("Username mismatch",
-			"provided", username,
-			"actual", user.Username)
-		return false, nil
-	}
-
-	logger.Info("GitLab token verification successful")
+	// Token is valid, log the username it belongs to for audit purposes
+	logger.Info("GitLab token verification successful", "token_username", user.Username)
 	return true, nil
 }
 
