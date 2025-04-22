@@ -68,13 +68,13 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
         run: |
-          go build -ldflags "-X main.version=${{ env.VERSION }}" -o antal-linux-${{ matrix.arch }} .
+          go build -ldflags "-X main.version=${{ env.VERSION }}" -o gcs_antal-linux-${{ matrix.arch }} .
           
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: antal-linux-${{ matrix.arch }}
-          path: antal-linux-${{ matrix.arch }}
+          name: gcs_gcs_antal-linux-${{ matrix.arch }}
+          path: gcs_gcs_antal-linux-${{ matrix.arch }}
           if-no-files-found: error
 
   release:
@@ -102,5 +102,5 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            antal-linux-amd64/antal-linux-amd64
-            antal-linux-arm64/antal-linux-arm64
+            gcs_antal-linux-amd64/gcs_antal-linux-amd64
+            gcs_antal-linux-arm64/gcs_antal-linux-arm64
