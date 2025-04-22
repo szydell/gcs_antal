@@ -52,11 +52,10 @@ logging:
   level: "info"
 
 # Sentry configuration (optional)
-# Remove this section or set dsn to empty string to disable Sentry
 sentry:
   # Sentry DSN - leave empty to disable Sentry
   dsn: ""
-  # Environment name (development, staging, production)
-  environment: "production"
-  # Percentage of transactions to sample for performance monitoring (0.0 to 1.0)
-  traces_sample_rate: 0.1
+  environment: "development"
+  sample_rate: 1.0
+  enable_tracing: false  # Add this field - controls Sentry tracing
+  debug: false  # Optional: helps with troubleshooting Sentry issues

@@ -80,18 +80,45 @@ func init() {
 			Dsn:              dsn,
 			Environment:      viper.GetString("sentry.environment"),
 			TracesSampleRate: viper.GetFloat64("sentry.sample_rate"),
+			EnableTracing:    viper.GetBool("sentry.enable_tracing"),
+			Debug:            viper.GetBool("sentry.debug"),
+			AttachStacktrace: true,
 		})
 		if err != nil {
 			slog.Error("Failed to initialize Sentry", "error", err)
 		} else {
-			slog.Info("Sentry initialized successfully")
+			slog.Info("Sentry initialized successfully",
+				"environment", viper.GetString("sentry.environment"),
+				"tracing_enabled", viper.GetBool("sentry.enable_tracing"))
+
+			// Opcjonalnie: testowy event pokazujący konfigurację
+			if viper.GetBool("sentry.debug") {
+				sentry.AddBreadcrumb(&sentry.Breadcrumb{
+					Category: "config",
+					Message:  "Sentry configuration loaded",
+					Level:    sentry.LevelInfo,
+					Data: map[string]interface{}{
+						"environment":     viper.GetString("sentry.environment"),
+						"tracing_enabled": viper.GetBool("sentry.enable_tracing"),
+						"sample_rate":     viper.GetFloat64("sentry.sample_rate"),
+					},
+				})
+			}
 		}
+	} else {
+		slog.Warn("Sentry DSN not provided - error tracking disabled")
 	}
 }
 
 func main() {
 	logger := slog.With("component", "main")
 	logger.Info("Starting GCS Antal, a NATS-GitLab Authentication Service", "version", version)
+
+	// Test event for Sentry
+	if viper.GetString("sentry.dsn") != "" {
+		sentry.CaptureMessage("GCS Antal started")
+		sentry.Flush(time.Second * 5)
+	}
 
 	// Create GitLab client
 	gitlabClient := auth.NewGitLabClient()
