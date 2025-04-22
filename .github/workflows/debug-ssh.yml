@@ -1,0 +1,93 @@
+name: Debug SSH Connection
+
+# This workflow will only run when manually triggered
+on:
+  workflow_dispatch:
+    inputs:
+      test_command:
+        description: 'Optional command to run on remote server'
+        required: false
+        default: 'echo "SSH connection successful"'
+
+jobs:
+  debug-ssh:
+    name: Debug SSH Connection
+    runs-on: ubuntu-latest
+    # Use production environment to access the secrets
+    environment:
+      name: production
+    permissions:
+      contents: read
+      
+    steps:
+      - name: Setup SSH key with extensive debug
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.ANTAL_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          
+          # Check key format (masked for security)
+          echo "Checking key format:"
+          head -n 1 ~/.ssh/id_ed25519 | cut -c -20
+          echo "Key file size:"
+          wc -l ~/.ssh/id_ed25519
+          
+          echo "SSH directory permissions:"
+          ls -la ~/.ssh/
+          
+          # Check hostname resolution
+          echo "Hostname resolution:"
+          nslookup ${{ secrets.ANTAL_HOSTNAME }} || echo "DNS lookup failed but continuing"
+          
+          # Test port connectivity
+          echo "Testing port connectivity:"
+          nc -zv -w 5 ${{ secrets.ANTAL_HOSTNAME }} 667 || echo "Port connectivity test failed but continuing"
+          
+          # Try ssh-keyscan with verbose output
+          echo "Running ssh-keyscan with verbose output:"
+          ssh-keyscan -v -p 667 -H ${{ secrets.ANTAL_HOSTNAME }} >> ~/.ssh/known_hosts 2>&1 || echo "Keyscan failed but continuing"
+          
+          echo "Known hosts content check:"
+          [ -s ~/.ssh/known_hosts ] && echo "Known hosts file exists and is not empty" || echo "Known hosts file is empty or doesn't exist"
+      
+      - name: Test SSH configuration
+        run: |
+          echo "SSH configuration test:"
+          ssh -G -p 667 antal@${{ secrets.ANTAL_HOSTNAME }}
+          
+          echo "SSH version info:"
+          ssh -V
+      
+      - name: Attempt basic SSH connection
+        run: |
+          echo "Testing basic SSH connection with verbose output:"
+          ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p 667 antal@${{ secrets.ANTAL_HOSTNAME }} exit || echo "Basic SSH connection failed"
+      
+      - name: Run test command (if connection succeeds)
+        if: success()
+        run: |
+          echo "Running user-provided test command:"
+          ssh -o StrictHostKeyChecking=no -p 667 antal@${{ secrets.ANTAL_HOSTNAME }} '${{ github.event.inputs.test_command }}'
+      
+      - name: Try alternative connection methods
+        if: failure()
+        run: |
+          echo "Trying alternative connection with IP address if hostname is the issue:"
+          # Get IP from hostname
+          IP=$(dig +short ${{ secrets.ANTAL_HOSTNAME }})
+          if [ -n "$IP" ]; then
+            echo "Resolved IP: $IP, attempting connection:"
+            ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p 667 antal@$IP exit || echo "IP-based connection failed"
+          else
+            echo "Could not resolve IP from hostname"
+          fi
+          
+          echo "Checking for common SSH issues:"
+          echo "- Line endings in key file:"
+          file ~/.ssh/id_ed25519
+          
+      - name: Cleanup SSH key
+        if: always()
+        run: |
+          echo "Cleaning up SSH key"
+          rm -f ~/.ssh/id_ed25519
