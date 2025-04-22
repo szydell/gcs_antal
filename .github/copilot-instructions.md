@@ -241,7 +241,7 @@ Minimize dependencies, but the following are approved:
 
 - Health check endpoint at `/health`
 - Prometheus metrics at `/metrics`
-- Sentry integration for error tracking (optional)
+- Sentry integration for error tracking (obligatory in code, optional in config)
 - Graceful shutdown
 
 
@@ -259,7 +259,7 @@ The claims is a standard JWT structure with a nested object named nats containin
     connect_opts - An object containing the data sent by client in the CONNECT message.
 
     client_tls - An object containing any client certificates, if applicable.
-    
+
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
