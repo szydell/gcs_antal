@@ -56,6 +56,6 @@ sentry:
   # Sentry DSN - leave empty to disable Sentry
   dsn: ""
   environment: "development"
-  sample_rate: 1.0
-  enable_tracing: false  # Add this field - controls Sentry tracing
+  sample_rate: 1.0       # 0.1 - 1.0 -> For example, to send 20% of transactions, set to 0.2
+  enable_tracing: false  # false/true
   debug: false  # Optional: helps with troubleshooting Sentry issues
