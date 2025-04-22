@@ -183,7 +183,7 @@ func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
 	tx.SetTag("username", username)
 	tx.SetTag("server_id", serverId)
 
-	c.logger.Info("Processing auth request", "username", username, "nkey", userNkey)
+	c.logger.Info("Processing auth request", "username", username)
 
 	// Create child span for GitLab verification
 	gitlabCtx := sentry.SetHubOnContext(ctx, sentry.CurrentHub())
