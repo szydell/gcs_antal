@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,10 +18,21 @@ import (
 	"git.sgw.equipment/restricted/gcs_antal/internal/server"
 )
 
+// Version information - can be set during build using:
+// go build -ldflags "-X main.version=1.0.0" -o antal
+var version = "dev"
+
 func init() {
 	// Define command line flags
 	pflag.String("config", "", "Path to config file")
+	pflag.Bool("version", false, "Display version information")
 	pflag.Parse()
+
+	// Check if version flag is passed
+	if versionFlag, _ := pflag.CommandLine.GetBool("version"); versionFlag {
+		fmt.Printf("GCS Antal version: %s\n", version)
+		os.Exit(0)
+	}
 
 	// Bind command line flags to viper
 	viper.BindPFlags(pflag.CommandLine)
@@ -79,7 +91,7 @@ func init() {
 
 func main() {
 	logger := slog.With("component", "main")
-	logger.Info("Starting NATS-GitLab Authentication Service")
+	logger.Info("Starting GCS Antal, a NATS-GitLab Authentication Service", "version", version)
 
 	// Create GitLab client
 	gitlabClient := auth.NewGitLabClient()
