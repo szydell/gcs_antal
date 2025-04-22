@@ -73,8 +73,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gcs_gcs_antal-linux-${{ matrix.arch }}
-          path: gcs_gcs_antal-linux-${{ matrix.arch }}
+          name: gcs_antal-linux-${{ matrix.arch }}
+          path: gcs_antal-linux-${{ matrix.arch }}
           if-no-files-found: error
 
   release:
