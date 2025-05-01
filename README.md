@@ -99,6 +99,34 @@ accounts {
 }
 ```
 
+## Template-Based Permissions
+
+GCS Antal supports Go template-based permissions that dynamically adapt to the authenticated user. This provides more granular access control and security isolation between users.
+
+### Available Template Variables
+
+Currently supported template variables:
+
+| Variable | Description | Example Usage |
+|----------|-------------|---------------|
+| `{{.Username}}` | Authenticated GitLab username | `user.{{.Username}}.>` |
+
+### How It Works
+
+When a user authenticates with GitLab, their username is injected into permission templates before authorizing NATS access:
+
+```yaml
+# In config.yaml
+permissions:
+  publish:
+    allow:
+      - "user.{{.Username}}.>"  # For user "john" becomes "user.john.>"
+  subscribe:
+    allow:
+      - "user.{{.Username}}.>"  # For user "john" becomes "user.john.>"
+      - "global.>"              # Unchanged - all users can access
+```
+
 ## Building
 
 Build a standalone binary:

@@ -37,14 +37,21 @@ nats:
       allow:
         - "topic.>"
         - "_INBOX.>"
+        - "user.{{.Username}}"         # Will be replaced with authenticated username
+        - "user.{{.Username}}.>"       # Supports hierarchical wildcards
+        - "global.>"                   # Universal access to global channels
       deny:
         - "private.>"
     subscribe:
       allow:
         - "topic.>"
         - "_INBOX.>"
+        - "user.{{.Username}}"         # Will be replaced with authenticated username
+        - "user.{{.Username}}.>"       # Supports hierarchical wildcards
+        - "global.>"                   # Universal access to global channels
       deny:
         - "private.>"
+        - "user.!{{.Username}}.private.>" # Block access to other users' private channels
 
 # Logging configuration
 logging:

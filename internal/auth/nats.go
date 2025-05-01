@@ -1,10 +1,12 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -240,27 +242,31 @@ func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
 	// Publish permissions
 	pubAllow := viper.GetStringSlice("nats.permissions.publish.allow")
 	for _, subject := range pubAllow {
-		uc.Permissions.Pub.Allow.Add(subject)
-		c.logger.Debug("Added publish allow permission", "subject", subject)
+		processedSubject := c.processPermissionTemplate(subject, username)
+		uc.Permissions.Pub.Allow.Add(processedSubject)
+		c.logger.Debug("Added publish allow permission", "subject", processedSubject)
 	}
 
 	pubDeny := viper.GetStringSlice("nats.permissions.publish.deny")
 	for _, subject := range pubDeny {
-		uc.Permissions.Pub.Deny.Add(subject)
-		c.logger.Debug("Added publish deny permission", "subject", subject)
+		processedSubject := c.processPermissionTemplate(subject, username)
+		uc.Permissions.Pub.Deny.Add(processedSubject)
+		c.logger.Debug("Added publish deny permission", "subject", processedSubject)
 	}
 
 	// Subscribe permissions
 	subAllow := viper.GetStringSlice("nats.permissions.subscribe.allow")
 	for _, subject := range subAllow {
-		uc.Permissions.Sub.Allow.Add(subject)
-		c.logger.Debug("Added subscribe allow permission", "subject", subject)
+		processedSubject := c.processPermissionTemplate(subject, username)
+		uc.Permissions.Sub.Allow.Add(processedSubject)
+		c.logger.Debug("Added subscribe allow permission", "subject", processedSubject)
 	}
 
 	subDeny := viper.GetStringSlice("nats.permissions.subscribe.deny")
 	for _, subject := range subDeny {
-		uc.Permissions.Sub.Deny.Add(subject)
-		c.logger.Debug("Added subscribe deny permission", "subject", subject)
+		processedSubject := c.processPermissionTemplate(subject, username)
+		uc.Permissions.Sub.Deny.Add(processedSubject)
+		c.logger.Debug("Added subscribe deny permission", "subject", processedSubject)
 	}
 	jwtSpan.Finish()
 
@@ -317,6 +323,41 @@ func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
 			"username": username,
 		},
 	})
+}
+
+// processPermissionTemplate processes Go template strings in permission subjects
+func (c *NATSClient) processPermissionTemplate(subjectTemplate string, username string) string {
+	// Define template data structure
+	type TemplateData struct {
+		Username string
+	}
+
+	// Create template
+	tmpl, err := template.New("permission").Parse(subjectTemplate)
+	if err != nil {
+		// Log error but return original string if template is invalid
+		c.logger.Error("Invalid permission template", "template", subjectTemplate, "error", err)
+		return subjectTemplate
+	}
+
+	// Prepare data for template
+	data := TemplateData{
+		Username: username,
+	}
+
+	// Execute template
+	var result bytes.Buffer
+	if err := tmpl.Execute(&result, data); err != nil {
+		c.logger.Error("Failed to process permission template", "template", subjectTemplate, "error", err)
+		return subjectTemplate
+	}
+
+	processed := result.String()
+	if processed != subjectTemplate {
+		c.logger.Debug("Processed permission template", "original", subjectTemplate, "processed", processed)
+	}
+
+	return processed
 }
 
 // respondMsg sends an authentication response to NATS
