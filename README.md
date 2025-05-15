@@ -3,9 +3,15 @@
 
 A lightweight authentication microservice that bridges NATS `auth_callout` authentication with GitLab Personal Access Tokens.
 
-## Overview
+## What Problem Does It Solve?
 
-GCS Antal enables seamless authentication of NATS clients using GitLab credentials. It acts as a middleware between NATS servers and GitLab's API, verifying tokens and providing appropriate permissions to authenticated clients.
+GCS Antal solves the challenge of securely connecting distributed applications using NATS messaging while leveraging existing GitLab credentials. Instead of managing separate authentication systems, teams can use their GitLab Personal Access Tokens to securely access NATS messaging channels, with permissions automatically mapped to their GitLab identity.
+
+This means:
+- Users don't need to manage multiple sets of credentials
+- Administrators can control access through GitLab's familiar interface
+- Access to messaging topics can be automatically scoped to user identity
+- Revoking GitLab access automatically revokes messaging access
 
 ### Key Features
 
