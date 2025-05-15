@@ -192,6 +192,40 @@ nats server check connection -s tls://nats.example.com --user Nick --password gl
 - **Permission Issues**: Review the configured permissions in `config.yaml`
 - **Connection Problems**: Verify NATS server configuration and network connectivity
 
+## Getting Help and Contributing
+### Reporting Issues
+If you encounter bugs or have feature requests, please file an issue at: [https://github.com/szydell/gcs_antal/issues](https://github.com/szydell/gcs_antal/issues)
+When reporting issues, please include:
+- Steps to reproduce the problem
+- Expected behavior
+- Actual behavior
+- GCS Antal version
+- Go version
+- NATS server version
+- GitLab version (if relevant)
+
+### How to Contribute
+We welcome contributions to GCS Antal! Here's how you can help:
+1. **Fork the repository** on GitHub
+2. **Create a branch** for your changes
+3. **Make your changes** following our coding standards
+4. **Add tests** for your changes
+5. **Submit a pull request** with a clear description of the changes
+
+#### Contribution Requirements
+All contributions must adhere to the following standards:
+- Follow the [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments) for style guidance
+- Include tests for new functionality
+- Maintain or improve code coverage
+- Document new features or changes in the README
+- Ensure all CI checks pass
+- Include a clear description of the purpose and implementation details in your PR
+
+### Getting Support
+For questions or help using GCS Antal:
+- Check existing issues on GitHub for similar questions
+- Open a new discussion in the Issues section for usage questions
+
 ## License
 
 MIT
