@@ -42,7 +42,11 @@ func (s *Server) Start() error {
 	// Health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]bool{"status": true})
+		if err := json.NewEncoder(w).Encode(map[string]bool{"status": true}); err != nil {
+			s.logger.Error("Failed to encode health check response", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 	})
 
 	// Metrics endpoint
