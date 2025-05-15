@@ -20,44 +20,44 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        
+
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.23'
           check-latest: true
-          
+
       - name: Run tests with coverage
         run: |
-          go test -race -coverprofile=coverage.out -covermode=atomic ./...
-          go tool cover -func=coverage.out
-          
+          go test -race -coverprofile=coverage.out -covermode=atomic ./...  
+          go tool cover -func=coverage.out  
+
       - name: Generate coverage badge
         uses: tj-actions/coverage-badge-go@v2
         with:
           filename: coverage.out
-          
+
       - name: Upload coverage report artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: |
-            coverage.out
+            coverage.out  
             coverage.svg
           if-no-files-found: error
-        
+
       - name: Run go vet
         run: go vet ./...
-        
-#      - name: Verify minimum coverage
-#        run: |
-#          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
-#          echo "Total coverage: $COVERAGE%"
-#          if (( $(echo "$COVERAGE < 70.0" | bc -l) )); then
-#            echo "Code coverage is below 70%. Please add more tests."
-#            exit 1
-#          fi
-          
+
+          #      - name: Verify minimum coverage
+          #        run: |
+          #          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+          #          echo "Total coverage: $COVERAGE%"
+          #          if (( $(echo "$COVERAGE < 70.0" | bc -l) )); then
+          #            echo "Code coverage is below 70%. Please add more tests."
+          #            exit 1
+          #          fi
+
   upload-coverage:
     name: Upload Coverage Badge
     needs: unit-tests
@@ -68,21 +68,24 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        
+
       - name: Download coverage badge
         uses: actions/download-artifact@v4
         with:
           name: coverage-report
-          
+
       - name: Commit and push coverage badge
         run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          mkdir -p .github/badges
-          mv coverage.svg .github/badges/coverage.svg
-          git add .github/badges/coverage.svg
-          git commit -m "Update coverage badge" || echo "No changes to commit"
-          git push
+          git config --global user.name 'github-actions[bot]'  
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'  
+          mkdir -p .github/badges  
+          # List the downloaded files to see their location  
+          ls -la  
+          # Move the coverage svg from the correct location  
+          mv coverage-report/coverage.svg .github/badges/coverage.svg  
+          git add .github/badges/coverage.svg  
+          git commit -m "Update coverage badge" || echo "No changes to commit"  
+          git push  
 
   build:
     name: Build binaries
@@ -97,30 +100,30 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        
+
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.23'
-          
+
       - name: Determine version
         id: get_version
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/}
-          else
-            VERSION="v0.0.0-build.${{ github.run_number }}"
-          fi
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then  
+            VERSION=${GITHUB_REF#refs/tags/}  
+          else  
+            VERSION="v0.0.0-build.${{ github.run_number }}"  
+          fi  
+          echo "VERSION=$VERSION" >> $GITHUB_ENV  
+          echo "version=$VERSION" >> $GITHUB_OUTPUT  
+
       - name: Build binary
         env:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
         run: |
-          go build -ldflags "-X main.version=${{ env.VERSION }}" -o gcs_antal-linux-${{ matrix.arch }} .
-          
+          go build -ldflags "-X main.version=${{ env.VERSION }}" -o gcs_antal-linux-${{ matrix.arch }} .  
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -138,10 +141,10 @@ jobs:
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
-        
+
       - name: List artifacts
         run: ls -la */
-        
+
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
@@ -150,5 +153,5 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            gcs_antal-linux-amd64/gcs_antal-linux-amd64
+            gcs_antal-linux-amd64/gcs_antal-linux-amd64  
             gcs_antal-linux-arm64/gcs_antal-linux-arm64
