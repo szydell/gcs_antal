@@ -183,6 +183,29 @@ These endpoints can be used with monitoring tools like Prometheus and for health
 
 ## Testing
 
+### Unit Tests
+
+To run the automated test suite for GCS Antal:
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests with verbose output
+go test -v ./...
+
+# Run tests with coverage report
+go test -cover ./...
+
+# Generate detailed HTML coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+```
+
+When adding new features or fixing bugs, make sure to run the test suite to verify that everything continues to work as expected.
+
+### Integration Testing
+
 Connect to NATS using your GitLab credentials:
 
 ```bash
@@ -191,6 +214,9 @@ nats pub test.subject "hello" --user "Nick" --password "glpat-your-gitlab-token"
 # Test connectivity
 nats server check connection -s tls://nats.example.com --user Nick --password glpat-personal-access-token
 ```
+
+
+
 
 ## Troubleshooting
 
