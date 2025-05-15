@@ -210,6 +210,10 @@ When reporting issues, please include:
 - NATS server version
 - GitLab version (if relevant)
 
+### Security Vulnerabilities
+For security vulnerabilities and sensitive bug reports, please follow the process described in our [SECURITY.md](SECURITY.md) file. We take security issues seriously and appreciate your responsible disclosure.
+
+
 ### How to Contribute
 We welcome contributions to GCS Antal! Here's how you can help:
 1. **Fork the repository** on GitHub
