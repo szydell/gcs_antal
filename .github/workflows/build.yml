@@ -27,11 +27,62 @@ jobs:
           go-version: '1.23'
           check-latest: true
           
-      - name: Run tests
-        run: go test -v ./...
+      - name: Run tests with coverage
+        run: |
+          go test -race -coverprofile=coverage.out -covermode=atomic ./...
+          go tool cover -func=coverage.out
+          
+      - name: Generate coverage badge
+        uses: tj-actions/coverage-badge-go@v2
+        with:
+          filename: coverage.out
+          
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.svg
+          if-no-files-found: error
         
       - name: Run go vet
         run: go vet ./...
+        
+      - name: Verify minimum coverage
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < 70.0" | bc -l) )); then
+            echo "Code coverage is below 70%. Please add more tests."
+            exit 1
+          fi
+          
+  upload-coverage:
+    name: Upload Coverage Badge
+    needs: unit-tests
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Download coverage badge
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          
+      - name: Commit and push coverage badge
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          mkdir -p .github/badges
+          mv coverage.svg .github/badges/coverage.svg
+          git add .github/badges/coverage.svg
+          git commit -m "Update coverage badge" || echo "No changes to commit"
+          git push
 
   build:
     name: Build binaries
@@ -42,7 +93,7 @@ jobs:
     strategy:
       matrix:
         arch: [amd64, arm64]
-      fail-fast: false  # Continue with other arch if one fails
+      fail-fast: false  # Continue with another arch if one fails
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
