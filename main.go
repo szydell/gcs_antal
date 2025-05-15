@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -28,14 +29,17 @@ func init() {
 	pflag.Bool("version", false, "Display version information")
 	pflag.Parse()
 
-	// Check if version flag is passed
+	// Check if a version flag is passed
 	if versionFlag, _ := pflag.CommandLine.GetBool("version"); versionFlag {
 		fmt.Printf("GCS Antal version: %s\n", version)
 		os.Exit(0)
 	}
 
 	// Bind command line flags to viper
-	viper.BindPFlags(pflag.CommandLine)
+	if err := viper.BindPFlags(pflag.CommandLine); err != nil {
+		slog.Error("Failed to bind command line flags", "error", err)
+		os.Exit(1)
+	}
 
 	// Set up configuration defaults
 	viper.SetConfigName("config")
@@ -43,15 +47,25 @@ func init() {
 	viper.AddConfigPath(".")
 	viper.AutomaticEnv()
 
-	// Use custom config file if specified
+	// Use custom a config file if specified
 	if configFile := viper.GetString("config"); configFile != "" {
 		viper.SetConfigFile(configFile)
 	}
 
 	// Read configuration
 	if err := viper.ReadInConfig(); err != nil {
-		slog.Error("Failed to read config file", "error", err)
-		os.Exit(1)
+		// Handle config file error
+		var configFileNotFoundError viper.ConfigFileNotFoundError
+		if errors.As(err, &configFileNotFoundError) {
+			slog.Error("Failed to read config file", "error", err)
+			if viper.GetString("sentry.dsn") != "" {
+				sentry.CaptureException(err)
+				sentry.Flush(time.Second * 2)
+			}
+			os.Exit(1)
+		}
+	} else {
+		slog.Info("Config loaded successfully", "file", viper.ConfigFileUsed())
 	}
 
 	// Configure logging
@@ -91,7 +105,7 @@ func init() {
 				"environment", viper.GetString("sentry.environment"),
 				"tracing_enabled", viper.GetBool("sentry.enable_tracing"))
 
-			// Opcjonalnie: testowy event pokazujący konfigurację
+			// Optional: test event showing configuration
 			if viper.GetBool("sentry.debug") {
 				sentry.AddBreadcrumb(&sentry.Breadcrumb{
 					Category: "config",
@@ -120,10 +134,10 @@ func main() {
 		sentry.Flush(time.Second * 5)
 	}
 
-	// Create GitLab client
+	// Create a GitLab client
 	gitlabClient := auth.NewGitLabClient()
 
-	// Create NATS client
+	// Create a NATS client
 	natsClient, err := auth.NewNATSClient(
 		viper.GetString("nats.url"),
 		viper.GetString("nats.user"),
@@ -137,22 +151,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Start NATS client
+	// Start the NATS client
 	if err := natsClient.Start(); err != nil {
 		logger.Error("Failed to start NATS client", "error", err)
 		os.Exit(1)
 	}
 
-	// Create HTTP server
+	// Create an HTTP server
 	srv := server.NewServer(
 		viper.GetString("server.host"),
 		viper.GetInt("server.port"),
 		time.Duration(viper.GetInt("server.timeout"))*time.Second,
 	)
 
-	// Start HTTP server in a goroutine
+	// Start an HTTP server in a goroutine
 	go func() {
-		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("Failed to start HTTP server", "error", err)
 			os.Exit(1)
 		}
@@ -162,7 +176,7 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	// Wait for interrupt signal
+	// Wait for the interrupt signal
 	<-quit
 	logger.Info("Shutting down server...")
 
