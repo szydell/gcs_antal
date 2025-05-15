@@ -12,53 +12,51 @@ permissions:
   contents: read
 
 jobs:
-  unit-tests:
-    name: Unit Tests
+  test:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # Changed to write to allow committing the badge
+    name: Update coverage badge
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          persist-credentials: true  # Need to be able to commit
-          fetch-depth: 0  # Full history for commits
+          persist-credentials: false # otherwise, the token used is the GITHUB_TOKEN, instead of your personal access token.
+          fetch-depth: 0 # otherwise, there would be errors pushing refs to the destination repository.
 
-      - name: Set up Go
+      - name: Setup go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.23'
-          check-latest: true
+          go-version-file: 'go.mod'
 
-      - name: Run tests with coverage
+      - name: Run Test
         run: |
-          go test -race -coverprofile=coverage.out -covermode=atomic ./...  
-          go tool cover -func=coverage.out  
+          go test -v ./... -covermode=count -coverprofile=coverage.out
+          go tool cover -func=coverage.out -o=coverage.out
 
-      - name: Generate coverage badge
+      - name: Go Coverage Badge  # Pass the `coverage.out` output to this action
         uses: tj-actions/coverage-badge-go@v2
         with:
           filename: coverage.out
-
-      - name: Move badge to badges directory
-        run: |
-          mkdir -p .github/badges  
-          mv coverage.svg .github/badges/coverage.svg  
 
       - name: Verify Changed files
         uses: tj-actions/verify-changed-files@v16
         id: verify-changed-files
         with:
-          files: .github/badges/coverage.svg
+          files: README.md
 
-      - name: Commit and push coverage badge
-        if: github.ref == 'refs/heads/main' && steps.verify-changed-files.outputs.files_changed == 'true'
+      - name: Commit changes
+        if: steps.verify-changed-files.outputs.files_changed == 'true'
         run: |
-          git config --global user.name 'github-actions[bot]'  
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'  
-          git add .github/badges/coverage.svg  
-          git commit -m "Update coverage badge"  
-          git push  
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add README.md
+          git commit -m "chore: Updated coverage badge."
+
+      - name: Push changes
+        if: steps.verify-changed-files.outputs.files_changed == 'true'
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ github.token }}
+          branch: ${{ github.head_ref }}
 
       - name: Run go vet
         run: go vet ./...
