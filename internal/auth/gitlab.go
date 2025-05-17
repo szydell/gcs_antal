@@ -14,15 +14,19 @@ import (
 
 // GitLabClient handles interactions with GitLab API
 type GitLabClient struct {
-	baseURL string
-	timeout time.Duration
+	baseURL           string
+	timeout           time.Duration
+	retries           int
+	retryDelaySeconds time.Duration
 }
 
 // NewGitLabClient creates a new GitLab client
 func NewGitLabClient() *GitLabClient {
 	return &GitLabClient{
-		baseURL: viper.GetString("gitlab.url"),
-		timeout: time.Duration(viper.GetInt("gitlab.timeout")) * time.Second,
+		baseURL:           viper.GetString("gitlab.url"),
+		timeout:           time.Duration(viper.GetInt("gitlab.timeout")) * time.Second,
+		retries:           viper.GetInt("gitlab.retries"),
+		retryDelaySeconds: time.Duration(viper.GetInt("gitlab.retryDelaySeconds")) * time.Second,
 	}
 }
 
@@ -31,11 +35,7 @@ func (c *GitLabClient) VerifyToken(token string) (bool, error) {
 	logger := slog.With("service", "gitlab")
 	logger.Debug("Verifying GitLab token")
 
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
-	defer cancel()
-
-	// Initialize GitLab client with the user's token and custom base URL
+	// Initialize the GitLab client with the user's token and custom base URL
 	git, err := gitlab.NewClient(token, gitlab.WithBaseURL(fmt.Sprintf("%s/api/v4", c.baseURL)))
 	if err != nil {
 		logger.Error("Failed to create GitLab client", "error", err)
@@ -43,30 +43,46 @@ func (c *GitLabClient) VerifyToken(token string) (bool, error) {
 		return false, fmt.Errorf("failed to create GitLab client: %w", err)
 	}
 
-	// Try to get the current user (token owner)
-	user, _, err := git.Users.CurrentUser(gitlab.WithContext(ctx))
-	if err != nil {
+	// Try to get the current user (token owner) with retries
+	maxAttempts := c.retries + 1
+	var lastErr error
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		// Create fresh context with timeout for each attempt
+		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+		user, _, err := git.Users.CurrentUser(gitlab.WithContext(ctx))
+		cancel() // Cancel immediately after the call
+
+		if err == nil {
+			if user == nil {
+				logger.Warn("GitLab API returned nil user")
+				return false, nil
+			}
+			logger.Info("GitLab token verification successful", "token_username", user.Username)
+			return true, nil
+		}
+
 		// Check if it's an authentication error (401 Unauthorized)
 		if isUnauthorizedError(err) {
 			logger.Info("GitLab token validation failed", "error", err)
 			return false, nil
 		}
 
-		// Other errors (network, timeout, etc.)
-		logger.Error("Error calling GitLab API", "error", err)
-		sentry.CaptureException(err)
-		return false, fmt.Errorf("error calling GitLab API: %w", err)
+		// Store the error for potential retry
+		lastErr = err
+
+		// Check if we should retry
+		if attempt < maxAttempts-1 {
+			delay := c.retryDelaySeconds
+			logger.Warn("GitLab API call failed, retrying", "attempt", attempt+1, "max_attempts", maxAttempts, "error", err)
+			time.Sleep(delay)
+		}
 	}
 
-	// No user returned
-	if user == nil {
-		logger.Warn("GitLab API returned nil user")
-		return false, nil
-	}
-
-	// Token is valid, log the username it belongs to for audit purposes
-	logger.Info("GitLab token verification successful", "token_username", user.Username)
-	return true, nil
+	// All attempts failed
+	logger.Error("Error calling GitLab API after all retries", "error", lastErr)
+	sentry.CaptureException(lastErr)
+	return false, fmt.Errorf("error calling GitLab API after %d attempts: %w", maxAttempts, lastErr)
 }
 
 // isUnauthorizedError checks if the error is an HTTP 401 Unauthorized error

@@ -75,6 +75,10 @@ nats:
 gitlab:
   url: "https://gitlab.example"
   timeout: 5
+  # Maximum retry attempts for GitLab API calls
+  retries: 2
+  # Delay between retries
+  retryDelaySeconds: 1
 ```
 
 #### 3. Configure NATS Server

@@ -16,6 +16,10 @@ gitlab:
   url: "https://gitlab.example"
   # Timeout for GitLab API requests in seconds
   timeout: 5
+  # Number of retries before giving up
+  retries: 2
+  # Delay between retries
+  retryDelaySeconds: 1
 
 # NATS configuration
 nats:
