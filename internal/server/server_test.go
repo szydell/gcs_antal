@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"net/http"
@@ -37,11 +38,11 @@ func TestStart(t *testing.T) {
 				errCh <- s.Start()
 			}()
 
-			// Wait for server to start or timeout
+			// Wait for the server to start or timeout
 			time.Sleep(100 * time.Millisecond)
 			select {
 			case err := <-errCh:
-				if err != nil && err != http.ErrServerClosed {
+				if err != nil && !errors.Is(err, http.ErrServerClosed) {
 					t.Fatalf("Failed to start server: %v", err)
 				}
 			default:
