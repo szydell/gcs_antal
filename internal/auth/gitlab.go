@@ -54,8 +54,8 @@ func (c *GitLabClient) VerifyToken(token string) (bool, error) {
 		cancel() // Cancel immediately after the call
 
 		if err == nil {
-			if user == nil {
-				logger.Warn("GitLab API returned nil user")
+			if user == nil || user.Username == "" {
+				logger.Info("GitLab returned an empty user")
 				return false, nil
 			}
 			logger.Info("GitLab token verification successful", "token_username", user.Username)
@@ -75,7 +75,7 @@ func (c *GitLabClient) VerifyToken(token string) (bool, error) {
 		if attempt < maxAttempts-1 {
 			delay := c.retryDelaySeconds
 			logger.Warn("GitLab API call failed, retrying", "attempt", attempt+1, "max_attempts", maxAttempts, "error", err)
-			time.Sleep(delay)
+			timeSleep(delay)
 		}
 	}
 
@@ -99,3 +99,6 @@ func isUnauthorizedError(err error) bool {
 
 	return false
 }
+
+// Variable to allow mocking time.Sleep in tests
+var timeSleep = time.Sleep
