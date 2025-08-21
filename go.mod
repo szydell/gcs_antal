@@ -1,6 +1,6 @@
 module git.sgw.equipment/restricted/gcs_antal
 
-go 1.24.4
+go 1.24.6
 
 require (
 	github.com/getsentry/sentry-go v0.35.1
