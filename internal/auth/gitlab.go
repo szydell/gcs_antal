@@ -35,6 +35,12 @@ func (c *GitLabClient) VerifyToken(token string) (bool, error) {
 	logger := slog.With("service", "gitlab")
 	logger.Debug("Verifying GitLab token")
 
+	// Fast-path: empty token cannot be valid; avoid unnecessary API calls
+	if token == "" {
+		logger.Info("Empty token provided")
+		return false, nil
+	}
+
 	// Initialize the GitLab client with the user's token and custom base URL
 	git, err := gitlab.NewClient(token, gitlab.WithBaseURL(fmt.Sprintf("%s/api/v4", c.baseURL)))
 	if err != nil {
