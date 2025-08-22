@@ -23,10 +23,11 @@ func NewServer(host string, port int, timeout time.Duration) *Server {
 
 	addr := fmt.Sprintf("%s:%d", host, port)
 	srv := &http.Server{
-		Addr:         addr,
-		ReadTimeout:  timeout,
-		WriteTimeout: timeout,
-		IdleTimeout:  timeout * 2,
+		Addr:              addr,
+		ReadTimeout:       timeout,
+		ReadHeaderTimeout: timeout,
+		WriteTimeout:      timeout,
+		IdleTimeout:       timeout * 2,
 	}
 
 	return &Server{
