@@ -128,10 +128,15 @@ func main() {
 	logger := slog.With("component", "main")
 	logger.Info("Starting GCS Antal, a NATS-GitLab Authentication Service", "version", version)
 
-	// Test event for Sentry
+	// Add a breadcrumb instead of creating a Sentry event on startup
+	// This avoids opening a new Sentry issue for every normal start
 	if viper.GetString("sentry.dsn") != "" {
-		sentry.CaptureMessage("GCS Antal started")
-		sentry.Flush(time.Second * 5)
+		sentry.AddBreadcrumb(&sentry.Breadcrumb{
+			Category: "lifecycle",
+			Message:  "GCS Antal started",
+			Level:    sentry.LevelInfo,
+		})
+		// No CaptureMessage here to prevent noise in Sentry
 	}
 
 	// Create a GitLab client
