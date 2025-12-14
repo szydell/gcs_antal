@@ -128,6 +128,14 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 	// Optional: initialize JetStream KV token cache.
 	cacheCfg := LoadTokenCacheConfig()
 	if cacheCfg.Enabled {
+		logger.Info("Token cache config loaded (JetStream KV)",
+			"enabled", cacheCfg.Enabled,
+			"bucket", cacheCfg.Bucket,
+			"ttl", cacheCfg.TTL,
+			"replicas", cacheCfg.Replicas,
+			"hmac_secret_set", cacheCfg.HMACSecret != "",
+		)
+
 		js, err := nc.JetStream()
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize JetStream: %w", err)
@@ -142,6 +150,14 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 			"bucket", cacheCfg.Bucket,
 			"ttl", cacheCfg.TTL,
 			"replicas", cacheCfg.Replicas,
+		)
+	} else {
+		logger.Info("Token cache disabled (JetStream KV)",
+			"enabled", cacheCfg.Enabled,
+			"bucket", cacheCfg.Bucket,
+			"ttl", cacheCfg.TTL,
+			"replicas", cacheCfg.Replicas,
+			"hmac_secret_set", cacheCfg.HMACSecret != "",
 		)
 	}
 
