@@ -1,5 +1,5 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/10566/badge)](https://www.bestpractices.dev/projects/10566)
-![Coverage](https://img.shields.io/badge/Coverage-14.6%25-red)
+![Coverage](https://img.shields.io/badge/Coverage-13.9%25-red)
 
 # GCS Antal
 ## NATS-GitLab Authentication Service
