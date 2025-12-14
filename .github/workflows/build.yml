@@ -220,7 +220,7 @@ jobs:
           if [[ -n "${DEPLOY_DST_RAW}" ]]; then
             DEPLOY_DST="${DEPLOY_DST_RAW}"
           else
-            DEPLOY_DST="/usr/local/bin/gcs_antal_${ARCH}"
+            DEPLOY_DST="/usr/local/bin/gcs_antal-linux-${ARCH}"
           fi
 
           echo "Uploading ${BIN} to ${SSH_HOST}:${REMOTE_TMP}"

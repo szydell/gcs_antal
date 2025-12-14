@@ -9,10 +9,17 @@ DST="${2:?missing DST}"
 
 # Twarde ograniczenia bezpieczeństwa:
 SERVICE="gcs_antal"
-ALLOWED_DST="/usr/local/bin/gcs_antal_amd64"   # <- DOSTOSUJ
 case "$SRC" in
-  /tmp/gcs_antal-*-amd64|/tmp/gcs_antal-*-arm64) ;;
-  *) echo "SRC not allowed: $SRC" >&2; exit 2 ;;
+  /tmp/gcs_antal-*-amd64)
+    ALLOWED_DST="/usr/local/bin/gcs_antal-linux-amd64"
+    ;;
+  /tmp/gcs_antal-*-arm64)
+    ALLOWED_DST="/usr/local/bin/gcs_antal-linux-arm64"
+    ;;
+  *)
+    echo "SRC not allowed: $SRC" >&2
+    exit 2
+    ;;
 esac
 
 if [[ "$DST" != "$ALLOWED_DST" ]]; then
