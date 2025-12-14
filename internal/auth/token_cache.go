@@ -26,7 +26,7 @@ type TokenCacheEntry struct {
 // TokenCache is a token cache implemented ONLY via NATS JetStream Key-Value.
 //
 // Implementations must:
-//   - use HMAC-SHA256(token, secret) as the KV key
+//   - Use HMAC-SHA256(token, secret) as the KV key
 //   - never persist or log plaintext tokens
 //   - rely on KV MaxAge for TTL enforcement
 type TokenCache interface {

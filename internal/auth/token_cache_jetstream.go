@@ -35,7 +35,7 @@ func NewJetStreamTokenCache(js nats.JetStreamContext, cfg TokenCacheConfig) (*Je
 		return nil, errors.New("token_cache.hmac_secret is required when token_cache.enabled is true")
 	}
 
-	// Bind to existing KV bucket, or create it if missing.
+	// Bind to the existing KV bucket or create it if missing.
 	created := false
 	kv, err := js.KeyValue(cfg.Bucket)
 	if err != nil {

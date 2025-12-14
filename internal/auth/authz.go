@@ -15,12 +15,12 @@ type GitLabVerifier interface {
 	VerifyTokenInfo(token string) (*VerifiedToken, error)
 }
 
-type AuthResult struct {
+type AuthorizeResult struct {
 	Allow     bool
 	FromCache bool
 	// Verified is populated when GitLab verification succeeded.
 	Verified *VerifiedToken
-	// CacheWriteErr is set when GitLab verification succeeds but writing to KV fails.
+	// CacheWriteErr is set when GitLab verification succeeds, but writing to KV fails.
 	// Authorization should still proceed (ALLOW) in that case.
 	CacheWriteErr error
 }
@@ -30,10 +30,10 @@ type AuthResult struct {
 //  2. If GitLab returns invalid token (401): deny immediately, do not check cache.
 //  3. If GitLab returns timeout/network/5xx: fallback to token cache (JetStream KV).
 //  4. Cache hit (and not expired via KV TTL): allow.
-func AuthorizeToken(ctx context.Context, token string, verifier GitLabVerifier, cache TokenCache, now func() time.Time) (AuthResult, error) {
+func AuthorizeToken(ctx context.Context, token string, verifier GitLabVerifier, cache TokenCache, now func() time.Time) (AuthorizeResult, error) {
 	vt, err := verifier.VerifyTokenInfo(token)
 	if err == nil {
-		res := AuthResult{Allow: true, Verified: vt}
+		res := AuthorizeResult{Allow: true, Verified: vt}
 		if cache != nil {
 			err := cache.Put(ctx, token, TokenCacheEntry{
 				Username:       vt.Username,
@@ -47,21 +47,21 @@ func AuthorizeToken(ctx context.Context, token string, verifier GitLabVerifier, 
 		return res, nil
 	}
 	if errors.Is(err, ErrInvalidToken) {
-		return AuthResult{Allow: false}, nil
+		return AuthorizeResult{Allow: false}, nil
 	}
 
 	if cache != nil && isFallbackToCacheError(err) {
 		_, cErr := cache.Get(ctx, token)
 		if cErr == nil {
-			return AuthResult{Allow: true, FromCache: true}, nil
+			return AuthorizeResult{Allow: true, FromCache: true}, nil
 		}
 		if errors.Is(cErr, ErrTokenCacheMiss) {
-			return AuthResult{Allow: false}, nil
+			return AuthorizeResult{Allow: false}, nil
 		}
-		return AuthResult{Allow: false}, cErr
+		return AuthorizeResult{Allow: false}, cErr
 	}
 
-	return AuthResult{Allow: false}, err
+	return AuthorizeResult{Allow: false}, err
 }
 
 func statusCodeFromGitLabError(err error) (int, bool) {
