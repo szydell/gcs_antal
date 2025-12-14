@@ -9,12 +9,14 @@ on:
     branches: [ main ]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
     name: Update coverage badge
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,7 +46,7 @@ jobs:
           files: README.md
 
       - name: Commit changes
-        if: steps.verify-changed-files.outputs.files_changed == 'true' && github.event_name == 'push'
+        if: steps.verify-changed-files.outputs.files_changed == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
@@ -52,7 +54,7 @@ jobs:
           git commit -m "chore: Updated coverage badge."
 
       - name: Push changes
-        if: steps.verify-changed-files.outputs.files_changed == 'true' && github.event_name == 'push'
+        if: steps.verify-changed-files.outputs.files_changed == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
         uses: ad-m/github-push-action@master
         with:
           github_token: ${{ github.token }}
@@ -138,3 +140,94 @@ jobs:
           files: |
             gcs_antal-linux-amd64/gcs_antal-linux-amd64  
             gcs_antal-linux-arm64/gcs_antal-linux-arm64
+
+  deploy:
+    name: Deploy
+    needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: [self-hosted, deployer]
+    permissions:
+      contents: read
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(vars.DEPLOY_TARGETS) }}
+    env:
+      DEPLOY_REMOTE_PATH: ${{ vars.DEPLOY_REMOTE_PATH }}
+      DEPLOY_DELAY_SECONDS: ${{ vars.DEPLOY_DELAY_SECONDS }}
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Deploy to host
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${DEPLOY_REMOTE_PATH}" ]]; then
+            echo "Missing variable DEPLOY_REMOTE_PATH" >&2
+            exit 1
+          fi
+
+          ARCH='${{ matrix.arch }}'
+          SSH_HOST_RAW='${{ matrix.ssh_host }}'
+          SSH_PORT='${{ matrix.ssh_port }}'
+
+          if [[ -z "${SSH_HOST_RAW}" ]]; then
+            echo "Matrix item must define ssh_host" >&2
+            exit 1
+          fi
+          if [[ -z "${ARCH}" ]]; then
+            echo "Matrix item must define arch (amd64|arm64)" >&2
+            exit 1
+          fi
+          if [[ "${ARCH}" != "amd64" && "${ARCH}" != "arm64" ]]; then
+            echo "Unsupported arch: ${ARCH} (expected: amd64|arm64)" >&2
+            exit 1
+          fi
+
+          # Prefer logging in as gitlab-runner unless ssh_host already includes user.
+          if [[ "${SSH_HOST_RAW}" == *@* ]]; then
+            SSH_HOST="${SSH_HOST_RAW}"
+          else
+            SSH_HOST="gitlab-runner@${SSH_HOST_RAW}"
+          fi
+
+          BIN="gcs_antal-linux-${ARCH}/gcs_antal-linux-${ARCH}"
+          if [[ ! -f "${BIN}" ]]; then
+            echo "Binary not found: ${BIN}" >&2
+            exit 1
+          fi
+
+          SSH_OPTS=(
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o ConnectTimeout=10
+          )
+          SCP_OPTS=(
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o ConnectTimeout=10
+          )
+
+          SSH_PORT_ARGS=()
+          SCP_PORT_ARGS=()
+          if [[ -n "${SSH_PORT}" ]]; then
+            SSH_PORT_ARGS=(-p "${SSH_PORT}")
+            SCP_PORT_ARGS=(-P "${SSH_PORT}")
+          fi
+
+          REMOTE_TMP="/tmp/gcs_antal-${{ github.ref_name }}-${ARCH}"
+
+          echo "Uploading ${BIN} to ${SSH_HOST}:${REMOTE_TMP}"
+          scp "${SCP_OPTS[@]}" "${SCP_PORT_ARGS[@]}" "${BIN}" "${SSH_HOST}:${REMOTE_TMP}"
+
+          echo "Installing to ${DEPLOY_REMOTE_PATH} and restarting service"
+          ssh "${SSH_OPTS[@]}" "${SSH_PORT_ARGS[@]}" "${SSH_HOST}" "sudo install -m 0755 '${REMOTE_TMP}' '${DEPLOY_REMOTE_PATH}' && sudo systemctl restart gcs_antal && rm -f '${REMOTE_TMP}'"
+
+          DELAY="${DEPLOY_DELAY_SECONDS:-5}"
+          echo "Waiting ${DELAY}s before next host"
+          sleep "${DELAY}"
+
+          # End of deploy script
