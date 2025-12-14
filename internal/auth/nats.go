@@ -132,6 +132,7 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize JetStream: %w", err)
 		}
+		logger.Info("JetStream initialized")
 		cache, err := NewJetStreamTokenCache(js, cacheCfg)
 		if err != nil {
 			return nil, err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/nats-io/nats.go"
 )
@@ -11,9 +12,13 @@ import (
 type JetStreamTokenCache struct {
 	kv     nats.KeyValue
 	secret []byte
+	logger *slog.Logger
+	bucket string
 }
 
 func NewJetStreamTokenCache(js nats.JetStreamContext, cfg TokenCacheConfig) (*JetStreamTokenCache, error) {
+	logger := slog.With("component", "token_cache_jetstream")
+
 	if js == nil {
 		return nil, errors.New("jetstream context is nil")
 	}
@@ -31,6 +36,7 @@ func NewJetStreamTokenCache(js nats.JetStreamContext, cfg TokenCacheConfig) (*Je
 	}
 
 	// Bind to existing KV bucket, or create it if missing.
+	created := false
 	kv, err := js.KeyValue(cfg.Bucket)
 	if err != nil {
 		if errors.Is(err, nats.ErrBucketNotFound) {
@@ -39,13 +45,30 @@ func NewJetStreamTokenCache(js nats.JetStreamContext, cfg TokenCacheConfig) (*Je
 				TTL:      cfg.TTL,
 				Replicas: cfg.Replicas,
 			})
+			if err == nil {
+				created = true
+			}
 		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to access token cache bucket %q: %w", cfg.Bucket, err)
 	}
 
-	return &JetStreamTokenCache{kv: kv, secret: []byte(cfg.HMACSecret)}, nil
+	if created {
+		logger.Info("Token cache bucket created (JetStream KV)",
+			"bucket", cfg.Bucket,
+			"ttl", cfg.TTL,
+			"replicas", cfg.Replicas,
+		)
+	} else {
+		logger.Info("Token cache bucket connected (JetStream KV)",
+			"bucket", cfg.Bucket,
+			"ttl", cfg.TTL,
+			"replicas", cfg.Replicas,
+		)
+	}
+
+	return &JetStreamTokenCache{kv: kv, secret: []byte(cfg.HMACSecret), logger: logger, bucket: cfg.Bucket}, nil
 }
 
 func (c *JetStreamTokenCache) Get(ctx context.Context, token string) (*TokenCacheEntry, error) {
@@ -55,16 +78,45 @@ func (c *JetStreamTokenCache) Get(ctx context.Context, token string) (*TokenCach
 	if err != nil {
 		return nil, err
 	}
+	keyPrefix := key
+	if len(keyPrefix) > 12 {
+		keyPrefix = keyPrefix[:12]
+	}
 
 	entry, err := c.kv.Get(key)
 	if err != nil {
 		if errors.Is(err, nats.ErrKeyNotFound) {
+			c.logger.Debug("Token cache miss",
+				"bucket", c.bucket,
+				"key_prefix", keyPrefix,
+			)
 			return nil, ErrTokenCacheMiss
 		}
+		c.logger.Warn("Token cache get failed",
+			"bucket", c.bucket,
+			"key_prefix", keyPrefix,
+			"error", err,
+		)
 		return nil, err
 	}
 
-	return unmarshalTokenCacheEntry(entry.Value())
+	out, err := unmarshalTokenCacheEntry(entry.Value())
+	if err != nil {
+		c.logger.Warn("Token cache entry unmarshal failed",
+			"bucket", c.bucket,
+			"key_prefix", keyPrefix,
+			"revision", entry.Revision(),
+			"error", err,
+		)
+		return nil, err
+	}
+
+	c.logger.Debug("Token cache hit",
+		"bucket", c.bucket,
+		"key_prefix", keyPrefix,
+		"revision", entry.Revision(),
+	)
+	return out, nil
 }
 
 func (c *JetStreamTokenCache) Put(ctx context.Context, token string, entry TokenCacheEntry) error {
@@ -74,12 +126,30 @@ func (c *JetStreamTokenCache) Put(ctx context.Context, token string, entry Token
 	if err != nil {
 		return err
 	}
+	keyPrefix := key
+	if len(keyPrefix) > 12 {
+		keyPrefix = keyPrefix[:12]
+	}
 
 	data, err := marshalTokenCacheEntry(entry)
 	if err != nil {
 		return err
 	}
 
-	_, err = c.kv.Put(key, data)
-	return err
+	rev, err := c.kv.Put(key, data)
+	if err != nil {
+		c.logger.Warn("Token cache put failed",
+			"bucket", c.bucket,
+			"key_prefix", keyPrefix,
+			"error", err,
+		)
+		return err
+	}
+	// Never log plaintext tokens; only log the derived key prefix for correlation.
+	c.logger.Debug("Token cache put ok",
+		"bucket", c.bucket,
+		"key_prefix", keyPrefix,
+		"revision", rev,
+	)
+	return nil
 }
