@@ -47,6 +47,13 @@ func init() {
 	viper.AddConfigPath(".")
 	viper.AutomaticEnv()
 
+	// Token cache (JetStream KV) defaults
+	viper.SetDefault("token_cache.enabled", false)
+	viper.SetDefault("token_cache.ttl", "24h")
+	viper.SetDefault("token_cache.bucket", "gitlab_token_cache")
+	viper.SetDefault("token_cache.replicas", 3)
+	viper.SetDefault("token_cache.hmac_secret", "")
+
 	// Use custom a config file if specified
 	if configFile := viper.GetString("config"); configFile != "" {
 		viper.SetConfigFile(configFile)

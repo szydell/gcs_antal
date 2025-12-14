@@ -79,7 +79,28 @@ gitlab:
   retries: 2
   # Delay between retries
   retryDelaySeconds: 1
+
+# Optional: JetStream KV token cache (removes GitLab as a single point of failure)
+token_cache:
+  enabled: true
+  ttl: 24h
+  bucket: "gitlab_token_cache"
+  replicas: 3
+  hmac_secret: "<SECRET>"
 ```
+
+### JetStream KV Token Cache (No SPOF)
+
+GCS Antal can optionally cache **verified** GitLab tokens in **NATS JetStream Key-Value (KV)**.
+This removes GitLab as a single point of failure: multiple `gcs_antal` instances can share the same KV bucket.
+
+Rules:
+
+- **GitLab is always attempted first**.
+- If GitLab is down (timeout/network error/HTTP 5xx), GCS Antal falls back to the JetStream KV cache.
+- If GitLab returns **401 / invalid token**, access is **denied immediately** (cache is not checked).
+- Tokens are **never stored in plaintext**. KV keys are `HMAC-SHA256(token, hmac_secret)`.
+- Expiration is automatic via KV TTL (bucket `MaxAge` / `TTL`).
 
 #### 3. Configure NATS Server
 

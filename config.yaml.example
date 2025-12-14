@@ -21,6 +21,19 @@ gitlab:
   # Delay between retries
   retryDelaySeconds: 1
 
+# Token cache (JetStream KV) configuration
+token_cache:
+  # Enable JetStream KV token caching to remove GitLab as a single point of failure
+  enabled: true
+  # TTL for cache entries (enforced via KV MaxAge)
+  ttl: 24h
+  # JetStream KV bucket name
+  bucket: "gitlab_token_cache"
+  # Replication factor for KV bucket
+  replicas: 3
+  # Secret used to HMAC-hash tokens into KV keys (tokens are never stored in plaintext)
+  hmac_secret: "<SECRET>"
+
 # NATS configuration
 nats:
   # NATS server URL

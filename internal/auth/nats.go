@@ -22,6 +22,7 @@ type NATSClient struct {
 	issuerKeyPair nkeys.KeyPair
 	xKeyPair      nkeys.KeyPair // May be nil if not using encryption
 	gitlabClient  *GitLabClient
+	tokenCache    TokenCache
 	logger        *slog.Logger
 }
 
@@ -116,13 +117,34 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 		},
 	})
 
-	return &NATSClient{
+	client := &NATSClient{
 		nc:            nc,
 		issuerKeyPair: issuerKeyPair,
 		xKeyPair:      xKeyPair,
 		gitlabClient:  gitlabClient,
 		logger:        logger,
-	}, nil
+	}
+
+	// Optional: initialize JetStream KV token cache.
+	cacheCfg := LoadTokenCacheConfig()
+	if cacheCfg.Enabled {
+		js, err := nc.JetStream()
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize JetStream: %w", err)
+		}
+		cache, err := NewJetStreamTokenCache(js, cacheCfg)
+		if err != nil {
+			return nil, err
+		}
+		client.tokenCache = cache
+		logger.Info("Token cache enabled (JetStream KV)",
+			"bucket", cacheCfg.Bucket,
+			"ttl", cacheCfg.TTL,
+			"replicas", cacheCfg.Replicas,
+		)
+	}
+
+	return client, nil
 }
 
 // Start starts listening for authentication requests
@@ -189,12 +211,11 @@ func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
 
 	// Create child span for GitLab verification
 	gitlabCtx := sentry.SetHubOnContext(ctx, sentry.CurrentHub())
-	span := sentry.StartSpan(gitlabCtx, "gitlab.verify_token")
+	span := sentry.StartSpan(gitlabCtx, "auth.authorize_token")
 
-	// Verify GitLab token
-	authentic, err := c.gitlabClient.VerifyToken(token)
+	result, err := AuthorizeToken(ctx, token, c.gitlabClient, c.tokenCache, time.Now)
 	if err != nil {
-		c.logger.Error("Error verifying GitLab token", "error", err)
+		c.logger.Error("Error authorizing token", "error", err)
 		c.respondMsg(msg.Reply, userNkey, serverId, "", "authentication error")
 
 		span.Status = sentry.SpanStatusInternalError
@@ -203,14 +224,17 @@ func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
 
 		sentry.WithScope(func(scope *sentry.Scope) {
 			scope.SetUser(sentry.User{Username: username})
-			scope.SetTag("error_type", "gitlab_verification")
+			scope.SetTag("error_type", "authorize_token")
 			sentry.CaptureException(err)
 		})
 		return
 	}
+	if result.CacheWriteErr != nil {
+		c.logger.Warn("Failed to write token cache", "error", result.CacheWriteErr)
+	}
 	span.Finish()
 
-	if !authentic {
+	if !result.Allow {
 		c.logger.Info("Authentication failed", "username", username)
 		c.respondMsg(msg.Reply, userNkey, serverId, "", "invalid credentials")
 
@@ -221,6 +245,12 @@ func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
 			sentry.CaptureMessage("Authentication failed - invalid credentials")
 		})
 		return
+	}
+
+	if result.FromCache {
+		tx.SetTag("auth_source", "cache")
+	} else {
+		tx.SetTag("auth_source", "gitlab")
 	}
 
 	// Authentication successful
