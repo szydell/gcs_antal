@@ -154,7 +154,6 @@ jobs:
       matrix:
         include: ${{ fromJSON(vars.DEPLOY_TARGETS) }}
     env:
-      DEPLOY_REMOTE_PATH: ${{ vars.DEPLOY_REMOTE_PATH }}
       DEPLOY_DELAY_SECONDS: ${{ vars.DEPLOY_DELAY_SECONDS }}
     steps:
       - name: Download build artifacts
@@ -165,14 +164,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -z "${DEPLOY_REMOTE_PATH}" ]]; then
-            echo "Missing variable DEPLOY_REMOTE_PATH" >&2
-            exit 1
-          fi
-
           ARCH='${{ matrix.arch }}'
           SSH_HOST_RAW='${{ matrix.ssh_host }}'
           SSH_PORT='${{ matrix.ssh_port }}'
+          DEPLOY_DST_RAW='${{ matrix.deploy_dst }}'
 
           if [[ -z "${SSH_HOST_RAW}" ]]; then
             echo "Matrix item must define ssh_host" >&2
@@ -187,11 +182,11 @@ jobs:
             exit 1
           fi
 
-          # Prefer logging in as gitlab-runner unless ssh_host already includes user.
+          # Prefer logging in as github-runner unless ssh_host already includes user.
           if [[ "${SSH_HOST_RAW}" == *@* ]]; then
             SSH_HOST="${SSH_HOST_RAW}"
           else
-            SSH_HOST="gitlab-runner@${SSH_HOST_RAW}"
+            SSH_HOST="github-runner@${SSH_HOST_RAW}"
           fi
 
           BIN="gcs_antal-linux-${ARCH}/gcs_antal-linux-${ARCH}"
@@ -220,11 +215,19 @@ jobs:
 
           REMOTE_TMP="/tmp/gcs_antal-${{ github.ref_name }}-${ARCH}"
 
+          # Destination path is validated server-side by /usr/local/sbin/gcs_antal_deploy.sh
+          # Prefer per-target dst from DEPLOY_TARGETS; otherwise fall back to a sensible default.
+          if [[ -n "${DEPLOY_DST_RAW}" ]]; then
+            DEPLOY_DST="${DEPLOY_DST_RAW}"
+          else
+            DEPLOY_DST="/usr/local/bin/gcs_antal_${ARCH}"
+          fi
+
           echo "Uploading ${BIN} to ${SSH_HOST}:${REMOTE_TMP}"
           scp "${SCP_OPTS[@]}" "${SCP_PORT_ARGS[@]}" "${BIN}" "${SSH_HOST}:${REMOTE_TMP}"
 
-          echo "Installing to ${DEPLOY_REMOTE_PATH} and restarting service"
-          ssh "${SSH_OPTS[@]}" "${SSH_PORT_ARGS[@]}" "${SSH_HOST}" "sudo install -m 0755 '${REMOTE_TMP}' '${DEPLOY_REMOTE_PATH}' && sudo systemctl restart gcs_antal && rm -f '${REMOTE_TMP}'"
+          echo "Deploying via /usr/local/sbin/gcs_antal_deploy.sh to ${DEPLOY_DST}"
+          ssh "${SSH_OPTS[@]}" "${SSH_PORT_ARGS[@]}" "${SSH_HOST}" "sudo /usr/local/sbin/gcs_antal_deploy.sh '${REMOTE_TMP}' '${DEPLOY_DST}'"
 
           DELAY="${DEPLOY_DELAY_SECONDS:-5}"
           echo "Waiting ${DELAY}s before next host"
