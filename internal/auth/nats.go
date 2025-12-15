@@ -172,7 +172,8 @@ func (c *NATSClient) Start() error {
 	defer span.Finish()
 
 	// Subscribe to the auth_callout subject
-	_, err := c.nc.Subscribe("$SYS.REQ.USER.AUTH", func(msg *nats.Msg) {
+	// Use a queue subscription so that only one of the active instances handles a given request.
+	_, err := c.nc.QueueSubscribe("$SYS.REQ.USER.AUTH", "gcs_antal_auth_callout", func(msg *nats.Msg) {
 		c.handleAuthRequest(msg)
 	})
 	if err != nil {
