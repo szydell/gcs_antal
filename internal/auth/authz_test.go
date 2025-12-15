@@ -134,7 +134,7 @@ func TestAuthorizeToken_InvalidToken_DoesNotCheckCache(t *testing.T) {
 	kv := &mockSharedKV{now: now, ttl: 24 * time.Hour, data: map[string]mockKVRecord{}}
 	cache := &mockTokenCache{secret: []byte("secret"), kv: kv}
 
-	// Pre-populate cache, then reset counters to ensure we only observe calls from authorization.
+	// Pre-populate the cache, then reset counters to ensure we only observe calls from authorization.
 	require.NoError(t, cache.Put(ctx, "glpat-invalid", TokenCacheEntry{Username: "tester", Scopes: "read_api", LastVerifiedAt: now().Format(time.RFC3339)}))
 	cache.ResetCounts()
 
