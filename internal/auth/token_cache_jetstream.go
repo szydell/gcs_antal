@@ -138,7 +138,7 @@ func (c *JetStreamTokenCache) Put(ctx context.Context, token string, entry Token
 
 	rev, err := c.kv.Put(key, data)
 	if err != nil {
-		c.logger.Warn("Token cache put failed",
+		c.logger.Info("Token cache put failed",
 			"bucket", c.bucket,
 			"key_prefix", keyPrefix,
 			"error", err,
@@ -146,7 +146,7 @@ func (c *JetStreamTokenCache) Put(ctx context.Context, token string, entry Token
 		return err
 	}
 	// Never log plaintext tokens; only log the derived key prefix for correlation.
-	c.logger.Debug("Token cache put ok",
+	c.logger.Info("Token cache put ok",
 		"bucket", c.bucket,
 		"key_prefix", keyPrefix,
 		"revision", rev,
