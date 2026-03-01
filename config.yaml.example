@@ -57,6 +57,8 @@ nats:
         - "user.{{.Username}}"         # Will be replaced with authenticated username
         - "user.{{.Username}}.>"       # Supports hierarchical wildcards
         - "global.>"                   # Universal access to global channels
+        - "$JS.API.>"                  # JetStream API access (KV, streams)
+        - "$KV.>"                      # JetStream KV write (put operations)
       deny:
         - "private.>"
     subscribe:
