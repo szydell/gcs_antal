@@ -51,16 +51,57 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 	}
 
 	// Parse the xKey seed if provided
-	var xKeyPair nkeys.KeyPair
-	if xKeySeed != "" {
-		xKeyPair, err = nkeys.FromSeed([]byte(xKeySeed))
-		if err != nil {
-			sentry.CaptureException(fmt.Errorf("invalid xKey seed: %w", err))
-			return nil, fmt.Errorf("invalid xKey seed: %w", err)
-		}
+	xKeyPair, err := parseXKeySeed(xKeySeed)
+	if err != nil {
+		sentry.CaptureException(fmt.Errorf("invalid xKey seed: %w", err))
+		return nil, fmt.Errorf("invalid xKey seed: %w", err)
 	}
 
-	// Connect to NATS with standard options
+	// Connect to NATS
+	nc, err := nats.Connect(url, buildNATSOptions(logger, user, pass)...)
+	if err != nil {
+		sentry.CaptureException(fmt.Errorf("failed to connect to NATS: %w", err))
+		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
+	}
+
+	logger.Info("Connected to NATS server", "url", nc.ConnectedUrl())
+	sentry.AddBreadcrumb(&sentry.Breadcrumb{
+		Category: "nats",
+		Message:  "Connected to NATS server",
+		Level:    sentry.LevelInfo,
+		Data: map[string]interface{}{
+			"server": nc.ConnectedUrl(),
+		},
+	})
+
+	client := &NATSClient{
+		nc:            nc,
+		issuerKeyPair: issuerKeyPair,
+		xKeyPair:      xKeyPair,
+		gitlabClient:  gitlabClient,
+		logger:        logger,
+	}
+
+	// Optional: initialize JetStream KV token cache.
+	if err := client.initTokenCache(); err != nil {
+		return nil, err
+	}
+
+	return client, nil
+}
+
+// parseXKeySeed parses the xKey seed if provided, returning a nil key pair
+// when no seed is given (encryption disabled).
+func parseXKeySeed(xKeySeed string) (nkeys.KeyPair, error) {
+	if xKeySeed == "" {
+		return nil, nil
+	}
+	return nkeys.FromSeed([]byte(xKeySeed))
+}
+
+// buildNATSOptions builds the standard set of NATS connection options,
+// including reconnect/error handlers and optional user/password auth.
+func buildNATSOptions(logger *slog.Logger, user, pass string) []nats.Option {
 	opts := []nats.Option{
 		nats.ReconnectWait(5 * time.Second),
 		nats.MaxReconnects(-1),
@@ -100,68 +141,46 @@ func NewNATSClient(url, user, pass string, issuerSeed, xKeySeed string, gitlabCl
 		opts = append(opts, nats.UserInfo(user, pass))
 	}
 
-	// Connect to NATS
-	nc, err := nats.Connect(url, opts...)
-	if err != nil {
-		sentry.CaptureException(fmt.Errorf("failed to connect to NATS: %w", err))
-		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
-	}
+	return opts
+}
 
-	logger.Info("Connected to NATS server", "url", nc.ConnectedUrl())
-	sentry.AddBreadcrumb(&sentry.Breadcrumb{
-		Category: "nats",
-		Message:  "Connected to NATS server",
-		Level:    sentry.LevelInfo,
-		Data: map[string]interface{}{
-			"server": nc.ConnectedUrl(),
-		},
-	})
-
-	client := &NATSClient{
-		nc:            nc,
-		issuerKeyPair: issuerKeyPair,
-		xKeyPair:      xKeyPair,
-		gitlabClient:  gitlabClient,
-		logger:        logger,
-	}
-
-	// Optional: initialize JetStream KV token cache.
+// initTokenCache optionally initializes the JetStream KV token cache based
+// on configuration, wiring it into the client when enabled.
+func (c *NATSClient) initTokenCache() error {
 	cacheCfg := LoadTokenCacheConfig()
-	if cacheCfg.Enabled {
-		logger.Info("Token cache config loaded (JetStream KV)",
-			"enabled", cacheCfg.Enabled,
-			"bucket", cacheCfg.Bucket,
-			"ttl", cacheCfg.TTL,
-			"replicas", cacheCfg.Replicas,
-			"hmac_secret_set", cacheCfg.HMACSecret != "",
-		)
-
-		js, err := nc.JetStream()
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize JetStream: %w", err)
-		}
-		logger.Info("JetStream initialized")
-		cache, err := NewJetStreamTokenCache(js, cacheCfg)
-		if err != nil {
-			return nil, err
-		}
-		client.tokenCache = cache
-		logger.Info("Token cache enabled (JetStream KV)",
-			"bucket", cacheCfg.Bucket,
-			"ttl", cacheCfg.TTL,
-			"replicas", cacheCfg.Replicas,
-		)
-	} else {
-		logger.Info("Token cache disabled (JetStream KV)",
-			"enabled", cacheCfg.Enabled,
-			"bucket", cacheCfg.Bucket,
-			"ttl", cacheCfg.TTL,
-			"replicas", cacheCfg.Replicas,
-			"hmac_secret_set", cacheCfg.HMACSecret != "",
-		)
+	logFields := []interface{}{
+		"enabled", cacheCfg.Enabled,
+		"bucket", cacheCfg.Bucket,
+		"ttl", cacheCfg.TTL,
+		"replicas", cacheCfg.Replicas,
+		"hmac_secret_set", cacheCfg.HMACSecret != "",
 	}
 
-	return client, nil
+	if !cacheCfg.Enabled {
+		c.logger.Info("Token cache disabled (JetStream KV)", logFields...)
+		return nil
+	}
+
+	c.logger.Info("Token cache config loaded (JetStream KV)", logFields...)
+
+	js, err := c.nc.JetStream()
+	if err != nil {
+		return fmt.Errorf("failed to initialize JetStream: %w", err)
+	}
+	c.logger.Info("JetStream initialized")
+
+	cache, err := NewJetStreamTokenCache(js, cacheCfg)
+	if err != nil {
+		return err
+	}
+	c.tokenCache = cache
+	c.logger.Info("Token cache enabled (JetStream KV)",
+		"bucket", cacheCfg.Bucket,
+		"ttl", cacheCfg.TTL,
+		"replicas", cacheCfg.Replicas,
+	)
+
+	return nil
 }
 
 // Start starts listening for authentication requests
