@@ -209,7 +209,7 @@ func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
 
 		sentry.WithScope(func(scope *sentry.Scope) {
 			scope.SetTag("error_type", "decode_auth_request")
-			scope.SetExtra("data_length", len(msg.Data))
+			scope.SetContext("auth_request", sentry.Context{"data_length": len(msg.Data)})
 			sentry.CaptureException(err)
 		})
 		return
@@ -332,7 +332,7 @@ func (c *NATSClient) handleAuthRequest(msg *nats.Msg) {
 		sentry.WithScope(func(scope *sentry.Scope) {
 			scope.SetUser(sentry.User{Username: username})
 			scope.SetTag("error_type", "claim_validation")
-			scope.SetExtra("validation_errors", vr.Errors())
+			scope.SetContext("validation", sentry.Context{"errors": vr.Errors()})
 			sentry.CaptureMessage("Error validating user claims")
 		})
 		return
