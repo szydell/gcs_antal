@@ -19,13 +19,13 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false # otherwise, the token used is the GITHUB_TOKEN instead of your personal access token.
           fetch-depth: 0 # otherwise, there would be errors pushing refs to the destination repository.
 
       - name: Setup go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
 
@@ -35,7 +35,7 @@ jobs:
           go tool cover -func=coverage.out -o=coverage.out
 
       - name: Go Coverage Badge  # Pass the `coverage.out` output to this action
-        uses: tj-actions/coverage-badge-go@v2
+        uses: tj-actions/coverage-badge-go@v3
         with:
           filename: coverage.out
 
@@ -55,7 +55,7 @@ jobs:
 
       - name: Push changes
         if: steps.verify-changed-files.outputs.files_changed == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
-        uses: ad-m/github-push-action@master
+        uses: ad-m/github-push-action@v1.3.0
         with:
           github_token: ${{ github.token }}
           branch: ${{ github.ref_name }}
@@ -84,10 +84,10 @@ jobs:
       fail-fast: false  # Continue with another arch if one fails
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
 
@@ -110,7 +110,7 @@ jobs:
           go build -ldflags "-X main.version=${{ env.VERSION }}" -o gcs_antal-linux-${{ matrix.arch }} .  
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gcs_antal-linux-${{ matrix.arch }}
           path: gcs_antal-linux-${{ matrix.arch }}
@@ -125,14 +125,14 @@ jobs:
       contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
 
       - name: List artifacts
         run: ls -la */
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           name: GCS Antal ${{ github.ref_name }}
           draft: false
@@ -157,7 +157,7 @@ jobs:
       DEPLOY_DELAY_SECONDS: ${{ vars.DEPLOY_DELAY_SECONDS }}
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
 
       - name: Deploy to host
         shell: bash
