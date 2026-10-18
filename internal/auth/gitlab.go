@@ -113,7 +113,10 @@ func (c *GitLabClient) VerifyTokenInfo(token string) (*VerifiedToken, error) {
 
 	// All attempts failed
 	logger.Error("Error calling GitLab API after all retries", "error", lastErr)
-	sentry.CaptureException(lastErr)
+	// Timeouts/network errors fall back to the token cache; not a Sentry-worthy exception.
+	if !isFallbackToCacheError(lastErr) {
+		sentry.CaptureException(lastErr)
+	}
 	return nil, fmt.Errorf("error calling GitLab API after %d attempts: %w", maxAttempts, lastErr)
 }
 
@@ -177,7 +180,9 @@ func (c *GitLabClient) VerifyToken(token string) (bool, error) {
 
 	// All attempts failed
 	logger.Error("Error calling GitLab API after all retries", "error", lastErr)
-	sentry.CaptureException(lastErr)
+	if !isFallbackToCacheError(lastErr) {
+		sentry.CaptureException(lastErr)
+	}
 	return false, fmt.Errorf("error calling GitLab API after %d attempts: %w", maxAttempts, lastErr)
 }
 
