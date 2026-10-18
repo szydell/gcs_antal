@@ -23,7 +23,13 @@ import (
 // go build -ldflags "-X main.version=1.0.0" -o antal
 var version = "dev"
 
-func init() {
+const (
+	sentryDSNKey           = "sentry.dsn"
+	sentryEnvironmentKey   = "sentry.environment"
+	sentryEnableTracingKey = "sentry.enable_tracing"
+)
+
+func initializeConfig() {
 	// Define command line flags
 	pflag.String("config", "", "Path to config file")
 	pflag.Bool("version", false, "Display version information")
@@ -65,7 +71,7 @@ func init() {
 		var configFileNotFoundError viper.ConfigFileNotFoundError
 		if errors.As(err, &configFileNotFoundError) {
 			slog.Error("Failed to read config file", "error", err)
-			if viper.GetString("sentry.dsn") != "" {
+			if viper.GetString(sentryDSNKey) != "" {
 				sentry.CaptureException(err)
 				sentry.Flush(time.Second * 2)
 			}
@@ -74,34 +80,37 @@ func init() {
 	} else {
 		slog.Info("Config loaded successfully", "file", viper.ConfigFileUsed())
 	}
+}
 
-	// Configure logging
-	logLevel := slog.LevelInfo
-	if levelStr := viper.GetString("logging.level"); levelStr != "" {
-		switch levelStr {
-		case "debug":
-			logLevel = slog.LevelDebug
-		case "info":
-			logLevel = slog.LevelInfo
-		case "warn":
-			logLevel = slog.LevelWarn
-		case "error":
-			logLevel = slog.LevelError
-		}
+// parseLogLevel maps a config string to a slog level, defaulting to info.
+func parseLogLevel(levelStr string) slog.Level {
+	switch levelStr {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
 	}
+}
 
+func configureLogging() {
 	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: logLevel,
+		Level: parseLogLevel(viper.GetString("logging.level")),
 	})
 	slog.SetDefault(slog.New(handler))
+}
 
+func initializeSentry() {
 	// Initialize Sentry if configured
-	if dsn := viper.GetString("sentry.dsn"); dsn != "" {
+	if dsn := viper.GetString(sentryDSNKey); dsn != "" {
 		err := sentry.Init(sentry.ClientOptions{
 			Dsn:              dsn,
-			Environment:      viper.GetString("sentry.environment"),
+			Environment:      viper.GetString(sentryEnvironmentKey),
 			TracesSampleRate: viper.GetFloat64("sentry.sample_rate"),
-			EnableTracing:    viper.GetBool("sentry.enable_tracing"),
+			EnableTracing:    viper.GetBool(sentryEnableTracingKey),
 			Debug:            viper.GetBool("sentry.debug"),
 			AttachStacktrace: true,
 		})
@@ -109,8 +118,8 @@ func init() {
 			slog.Error("Failed to initialize Sentry", "error", err)
 		} else {
 			slog.Info("Sentry initialized successfully",
-				"environment", viper.GetString("sentry.environment"),
-				"tracing_enabled", viper.GetBool("sentry.enable_tracing"))
+				"environment", viper.GetString(sentryEnvironmentKey),
+				"tracing_enabled", viper.GetBool(sentryEnableTracingKey))
 
 			// Optional: test event showing configuration
 			if viper.GetBool("sentry.debug") {
@@ -119,8 +128,8 @@ func init() {
 					Message:  "Sentry configuration loaded",
 					Level:    sentry.LevelInfo,
 					Data: map[string]interface{}{
-						"environment":     viper.GetString("sentry.environment"),
-						"tracing_enabled": viper.GetBool("sentry.enable_tracing"),
+						"environment":     viper.GetString(sentryEnvironmentKey),
+						"tracing_enabled": viper.GetBool(sentryEnableTracingKey),
 						"sample_rate":     viper.GetFloat64("sentry.sample_rate"),
 					},
 				})
@@ -132,6 +141,10 @@ func init() {
 }
 
 func main() {
+	initializeConfig()
+	configureLogging()
+	initializeSentry()
+
 	logger := slog.With("component", "main")
 	logger.Info("Starting GCS Antal, a NATS-GitLab Authentication Service", "version", version)
 
