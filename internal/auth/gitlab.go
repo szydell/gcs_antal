@@ -56,68 +56,79 @@ func (c *GitLabClient) VerifyTokenInfo(token string) (*VerifiedToken, error) {
 		return nil, fmt.Errorf("failed to create GitLab client: %w", err)
 	}
 
-	// Try to get the current user (token owner) with retries
+	return c.verifyTokenInfoWithRetries(git, logger)
+}
+
+func (c *GitLabClient) verifyTokenInfoWithRetries(git *gitlab.Client, logger *slog.Logger) (*VerifiedToken, error) {
 	maxAttempts := c.retries + 1
 	var lastErr error
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		// Create fresh context with timeout for each attempt
-		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
-		user, _, err := git.Users.CurrentUser(gitlab.WithContext(ctx))
-
-		var scopes []string
+		verified, err := c.verifyTokenInfoAttempt(git, logger)
 		if err == nil {
-			// Best-effort: retrieve token scopes for caching.
-			// Not all token types may support this endpoint.
-			pat, _, patErr := git.PersonalAccessTokens.GetSinglePersonalAccessToken(gitlab.WithContext(ctx))
-			if patErr == nil && pat != nil {
-				scopes = pat.Scopes
-			} else if patErr != nil {
-				// If the token is unauthorized, treat it as invalid.
-				if isUnauthorizedError(patErr) {
-					cancel()
-					logger.Info("GitLab token validation failed", "error", patErr)
-					return nil, ErrInvalidToken
-				}
-				// Non-fatal: we still consider the token verified based on CurrentUser.
-				logger.Debug("Unable to retrieve token scopes", "error", patErr)
-			}
+			return verified, nil
 		}
-		cancel() // Cancel immediately after the call(s)
-
-		if err == nil {
-			if user == nil || user.Username == "" {
-				logger.Info("GitLab returned an empty user")
-				return nil, ErrInvalidToken
-			}
-			logger.Info("GitLab token verification successful", "token_username", user.Username, "scopes", strings.Join(scopes, ","))
-			return &VerifiedToken{Username: user.Username, Scopes: scopes}, nil
-		}
-
-		// Check if it's an authentication error (401 Unauthorized)
-		if isUnauthorizedError(err) {
+		if errors.Is(err, ErrInvalidToken) {
 			logger.Info("GitLab token validation failed", "error", err)
 			return nil, ErrInvalidToken
 		}
 
-		// Store the error for potential retry
 		lastErr = err
-
-		// Check if we should retry
 		if attempt < maxAttempts-1 {
-			delay := c.retryDelaySeconds
 			logger.Warn("GitLab API call failed, retrying", "attempt", attempt+1, "max_attempts", maxAttempts, "error", err)
-			timeSleep(delay)
+			timeSleep(c.retryDelaySeconds)
 		}
 	}
 
-	// All attempts failed
+	return nil, c.verifyTokenInfoFailure(maxAttempts, lastErr, logger)
+}
+
+func (c *GitLabClient) verifyTokenInfoAttempt(git *gitlab.Client, logger *slog.Logger) (*VerifiedToken, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+
+	user, _, err := git.Users.CurrentUser(gitlab.WithContext(ctx))
+	if err != nil {
+		if isUnauthorizedError(err) {
+			return nil, ErrInvalidToken
+		}
+		return nil, err
+	}
+	if user == nil || user.Username == "" {
+		logger.Info("GitLab returned an empty user")
+		return nil, ErrInvalidToken
+	}
+
+	scopes, err := tokenScopes(git, ctx, logger)
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("GitLab token verification successful", "token_username", user.Username, "scopes", strings.Join(scopes, ","))
+	return &VerifiedToken{Username: user.Username, Scopes: scopes}, nil
+}
+
+func tokenScopes(git *gitlab.Client, ctx context.Context, logger *slog.Logger) ([]string, error) {
+	pat, _, err := git.PersonalAccessTokens.GetSinglePersonalAccessToken(gitlab.WithContext(ctx))
+	if err == nil {
+		if pat == nil {
+			return nil, nil
+		}
+		return pat.Scopes, nil
+	}
+	if isUnauthorizedError(err) {
+		return nil, ErrInvalidToken
+	}
+	logger.Debug("Unable to retrieve token scopes", "error", err)
+	return nil, nil
+}
+
+func (c *GitLabClient) verifyTokenInfoFailure(maxAttempts int, lastErr error, logger *slog.Logger) error {
 	logger.Error("Error calling GitLab API after all retries", "error", lastErr)
 	// Timeouts/network errors fall back to the token cache; not a Sentry-worthy exception.
 	if !isFallbackToCacheError(lastErr) {
 		sentry.CaptureException(lastErr)
 	}
-	return nil, fmt.Errorf("error calling GitLab API after %d attempts: %w", maxAttempts, lastErr)
+	return fmt.Errorf("error calling GitLab API after %d attempts: %w", maxAttempts, lastErr)
 }
 
 // VerifyToken checks if the provided token is valid.

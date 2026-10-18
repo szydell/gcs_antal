@@ -87,17 +87,8 @@ func isFallbackToCacheError(err error) bool {
 		}
 	}
 
-	var uerr *url.Error
-	if errors.As(err, &uerr) {
-		if uerr.Timeout() {
-			return true
-		}
-		var nerr2 net.Error
-		if errors.As(uerr, &nerr2) {
-			if nerr2.Timeout() || nerr2.Temporary() {
-				return true
-			}
-		}
+	if isURLFallbackError(err) {
+		return true
 	}
 
 	var opErr *net.OpError
@@ -110,4 +101,17 @@ func isFallbackToCacheError(err error) bool {
 	}
 
 	return false
+}
+
+func isURLFallbackError(err error) bool {
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return false
+	}
+	if urlErr.Timeout() {
+		return true
+	}
+
+	var netErr net.Error
+	return errors.As(urlErr, &netErr) && (netErr.Timeout() || netErr.Temporary())
 }
